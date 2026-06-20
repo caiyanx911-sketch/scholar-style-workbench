@@ -58,6 +58,55 @@ const conceptSeeds = [
 
 const markerStopWords = new Set(Object.values(markerSets).flat());
 
+const genericAiPatterns = [
+  "首先",
+  "其次",
+  "最后",
+  "综上所述",
+  "总而言之",
+  "值得我们思考",
+  "具有重要意义",
+  "影响深远",
+  "在当今社会",
+  "随着时代的发展",
+  "不可忽视",
+  "毫无疑问",
+  "显而易见",
+  "提供了新的视角",
+  "推动了发展",
+];
+
+const zhangStyleHints = {
+  framing: ["问题域", "时代问题", "历史条件", "价值系统", "现代学术", "思想史"],
+  verbs: ["重构", "收摄", "安顿", "导引", "自觉化", "成立", "开出"],
+  relation: ["并非", "而是", "不只是", "不能只", "正是在此意义上", "也就是说", "这意味着"],
+  bounded: ["在某种意义上", "可能", "似乎", "并不能简单地", "大致可以说"],
+};
+
+const broadCitationTerms = new Set([
+  "哲学",
+  "主体",
+  "思想",
+  "价值",
+  "问题",
+  "意义",
+  "历史",
+  "现代",
+  "学术",
+  "政治",
+  "关系",
+  "传统",
+  "方法",
+  "文明",
+  "差异",
+  "平等",
+  "中国",
+  "国家",
+  "经学",
+  "佛学",
+  "现代学术",
+]);
+
 const defaultProfile = {
   id: "zhang-zhiqiang",
   name: "张志强",
@@ -490,13 +539,23 @@ function compactExcerpt(text, limit = 180) {
 
 function findCitationMatches(profile, text, limit = 8) {
   const pool = profile.citationIndex || [];
-  const query = `${text} ${(profile.lexicon || []).slice(0, 8).join(" ")}`;
+  const directTerms = (profile.lexicon || []).filter((term) => term.length >= 2 && text.includes(term));
+  const query = `${text} ${directTerms.join(" ")}`;
   return pool
-    .map((entry) => ({
-      ...entry,
-      score: (entry.terms || []).reduce((sum, term) => sum + (query.includes(term) ? 2 : 0), 0) + (query.includes(entry.sourceTitle) ? 3 : 0),
-    }))
-    .filter((entry) => entry.score > 0)
+    .map((entry) => {
+      const hits = (entry.terms || []).filter((term) => query.includes(term));
+      const directHits = hits.filter((term) => text.includes(term));
+      const specificHits = directHits.filter((term) => !broadCitationTerms.has(term));
+      const titleHit = query.includes(entry.sourceTitle);
+      return {
+        ...entry,
+        score: directHits.length * 2 + specificHits.length * 3 + (titleHit ? 4 : 0),
+        _directHits: directHits,
+        _specificHits: specificHits,
+        _titleHit: titleHit,
+      };
+    })
+    .filter((entry) => entry._titleHit || entry._specificHits.length > 0 || entry._directHits.length >= 2)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }
@@ -819,41 +878,178 @@ function renderSourcesView() {
   `;
 }
 
+function extractArgument(text) {
+  const clean = text.trim().replace(/\s+/g, " ");
+  const sentences = splitSentences(clean);
+  const fallback = clean.slice(0, 96);
+  const thesis =
+    sentences.find((sentence) => /(不是|不只是|并非|而是|在于|认为|应当|需要|关乎|意味着)/.test(sentence)) ||
+    sentences[0] ||
+    fallback;
+  const problem =
+    sentences.find((sentence) => /(问题|如何|为什么|何以|要理解|关乎)/.test(sentence)) ||
+    thesis;
+  const evidence = sentences
+    .filter((sentence) => /(因为|由于|例如|材料|文献|表明|显示|说明|根据|一方面|另一方面)/.test(sentence))
+    .slice(0, 3);
+  const uncertainty = sentences
+    .filter((sentence) => /(可能|或许|似乎|尚需|仍需|不能简单|有待)/.test(sentence))
+    .slice(0, 2);
+  return {
+    topic: thesis.replace(/[。！？!?].*$/, "").slice(0, 54) || "这个问题",
+    problem,
+    thesis,
+    evidence,
+    uncertainty,
+    sentenceCount: sentences.length,
+  };
+}
+
+function pickProfileTerms(profile, idea, count = 8) {
+  const lexicon = profile.lexicon || [];
+  const hits = lexicon.filter((term) => idea.includes(term));
+  const zhangFirst = profile.id === "zhang-zhiqiang" || profile.name === "张志强";
+  const fallback = zhangFirst
+    ? [...new Set([...zhangStyleHints.framing, ...hits, ...lexicon, ...zhangStyleHints.verbs])]
+    : [...new Set([...hits, ...lexicon, ...zhangStyleHints.framing, ...zhangStyleHints.verbs])];
+  return fallback.filter(Boolean).slice(0, count);
+}
+
+function antiGenericAudit(text) {
+  const hits = genericAiPatterns.filter((pattern) => text.includes(pattern));
+  const sentenceLengths = splitSentences(text).map((sentence) => tokenize(sentence).length);
+  const shortSentenceRatio = sentenceLengths.length
+    ? sentenceLengths.filter((length) => length > 0 && length < 18).length / sentenceLengths.length
+    : 0;
+  return {
+    hits,
+    shortSentenceRatio: Number(shortSentenceRatio.toFixed(2)),
+    penalty: Math.min(28, hits.length * 5 + (shortSentenceRatio > 0.6 ? 8 : 0)),
+  };
+}
+
+function styleAudit(profile, text) {
+  const sentences = splitSentences(text);
+  const stats = sentenceStats(sentences);
+  const contrastHits = (profile.markers?.contrast || []).filter((item) => text.includes(item));
+  const causalHits = (profile.markers?.causal || []).filter((item) => text.includes(item));
+  const reformulationHits = (profile.markers?.reformulation || []).filter((item) => text.includes(item));
+  const lexiconHits = (profile.lexicon || []).filter((item) => text.includes(item));
+  const hasProblemFrame = /问题域|时代问题|历史条件|要理解|如何理解|关乎|意味着|在此意义上/.test(text);
+  const hasBoundedClaim = /在某种意义上|可能|或许|似乎|并不能简单地|大致可以说|暂时只能说/.test(text);
+  const generic = antiGenericAudit(text);
+  let score = 0;
+  score += Math.min(22, contrastHits.length * 6);
+  score += Math.min(16, causalHits.length * 4);
+  score += Math.min(14, reformulationHits.length * 5);
+  score += Math.min(20, lexiconHits.length * 3);
+  score += hasProblemFrame ? 14 : 0;
+  score += hasBoundedClaim ? 8 : 0;
+  score += stats.mean >= 28 ? 10 : stats.mean >= 20 ? 6 : 2;
+  score = Math.max(0, Math.min(100, score - generic.penalty));
+  return {
+    score,
+    stats,
+    contrastHits,
+    causalHits,
+    reformulationHits,
+    lexiconHits,
+    hasProblemFrame,
+    hasBoundedClaim,
+    generic,
+    suggestions: buildAuditSuggestions({ contrastHits, causalHits, reformulationHits, lexiconHits, hasProblemFrame, hasBoundedClaim, stats, generic }),
+  };
+}
+
+function buildAuditSuggestions(audit) {
+  const suggestions = [];
+  if (!audit.hasProblemFrame) suggestions.push("开头需要先建立问题域，而不是直接宣布结论。");
+  if (!audit.contrastHits.length) suggestions.push("加入“并非/不是……而是……”一类概念区分。");
+  if (!audit.reformulationHits.length) suggestions.push("加入“也就是说/换言之/正是在此意义上”的重述推进。");
+  if (audit.lexiconHits.length < 3) suggestions.push("增加当前 profile 的核心概念词，避免只保留用户原句。");
+  if (!audit.hasBoundedClaim) suggestions.push("结尾应给出有限判断，用“在某种意义上/暂时只能说”校准强度。");
+  if (audit.stats.mean < 24) suggestions.push("句子偏短，适当增加限定、转折和因果层次。");
+  if (audit.generic.hits.length) suggestions.push(`删除通用 AI 腔：${audit.generic.hits.join("、")}。`);
+  return suggestions.length ? suggestions : ["风格结构基本通过；下一步主要补充文献证据和更具体的问题域。"];
+}
+
+function buildCodexStyleDraft(profile, idea, mode) {
+  const cleanIdea = idea.trim().replace(/\s+/g, " ");
+  const argument = extractArgument(cleanIdea);
+  const thesis = argument.thesis.replace(/[。！？!?]+$/, "");
+  const terms = pickProfileTerms(profile, cleanIdea, 8);
+  const termA = terms[0] || "问题域";
+  const termB = terms[1] || "价值系统";
+  const termC = terms[2] || "历史条件";
+  const termD = terms[3] || "主体";
+  const citations = findCitationMatches(profile, cleanIdea, 6);
+  const sourceClause = citations.length
+    ? `从现有材料看，${citations.map(formatCitationRef).slice(0, 3).join("、")} 可以作为进一步展开这一判断的文献线索；`
+    : "在尚未补入更具体文献之前，这一判断只能作为问题意识的初步展开；";
+  const voicePrefix = mode === "lecture" ? "在我看来，" : "";
+  const intro =
+    mode === "intro"
+      ? `要把“${argument.topic}”处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
+      : `${voicePrefix}要理解“${argument.topic}”，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉到${termA}、${termB}与${termC}之间的重新配置。`;
+  const middle =
+    `如果说通常的表述容易把这一点理解为“${thesis}”，那么更需要辨明的是，这一判断并非只是对某一经验现象的概括，而是关乎相关概念如何被组织、${termD}如何在其中安顿自身位置的问题。也就是说，真正需要展开的，不是把原命题再说得更顺畅，而是说明它为什么会在特定的历史和思想关系中成为一个问题；这意味着，改写的任务并不只是修饰语句，而是重新安排问题、概念与判断之间的层次。`;
+  const close =
+    `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${terms.slice(0, 4).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要更具体的文本材料来支撑其历史位置和理论边界。`;
+  return {
+    argument,
+    citations,
+    draft: `${intro}${middle}${close}`,
+  };
+}
+
 function localDraft(profile, idea, mode) {
   const cleanIdea = idea.trim().replace(/\s+/g, " ");
   if (!cleanIdea) return "请先输入你的观点。";
-  const topic = cleanIdea.replace(/[。！？!?].*$/, "").slice(0, 48);
-  const keyTerms = (profile.lexicon || []).slice(0, 6).join("、");
-  const styleNote = mode === "lecture" ? "在我看来，" : "";
-  const citations = findCitationMatches(profile, cleanIdea, 5);
-  const citationHint = citations.length ? `可参照 ${citations.map(formatCitationRef).join("、")} 的材料线索。` : "当前 profile 没有足够的引用索引，正式写作前需要补充材料。";
-  return `## 改写稿
+  const result = buildCodexStyleDraft(profile, cleanIdea, mode);
+  const audit = styleAudit(profile, result.draft);
+  const sourceNotes = result.citations.length
+    ? result.citations.map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n")
+    : "- 暂无候选出处；请先在“建模”页导入目标学者或主题文献。";
+  return `## 论点抽取
 
-${styleNote}要理解“${topic}”，不能只把它看作一个孤立的表达问题。它之所以成为问题，恰恰在于它处在既有${keyTerms || "价值系统"}重新分化和重组的过程中。${cleanIdea} 也就是说，这里真正需要辨明的，并非只是某一工具、观念或制度的外在功能，而是它如何改变问题被提出、关系被组织以及主体理解自身位置的方式。正是在此意义上，对这一问题的讨论，才不只是经验层面的说明，而是关乎一种新的学术和价值秩序如何被安顿的问题。${citationHint}
+- 问题域: ${result.argument.problem}
+- 核心判断: ${result.argument.thesis}
+- 证据线索: ${result.argument.evidence.length ? result.argument.evidence.join("；") : "原文暂未给出明确证据。"}
 
-## 使用的风格规则
-- 词汇: 使用“问题、价值系统、主体、安顿”等概念化表达。
-- 句式: 采用“不能只把它看作……而是……”和“也就是说”的重述结构。
-- 段落: 先建构问题域，再转入概念区分，最后给出有限判断。
-- 论证: 把原始观点放入历史或思想关系中，而非直接下结论。
+## 风格化改写稿
+
+${result.draft}
+
+## Codex 风格自检
+- 风格贴近度: ${audit.score}/100
+- 平均句长: ${audit.stats.mean}
+- 命中转折: ${audit.contrastHits.join("、") || "无"}
+- 命中重述: ${audit.reformulationHits.join("、") || "无"}
+- 命中概念词: ${audit.lexiconHits.slice(0, 10).join("、") || "无"}
+- 反 ChatGPT 腔: ${audit.generic.hits.length ? `需删除 ${audit.generic.hits.join("、")}` : "未命中常见平滑套话"}
+
+## 下一轮修改建议
+${audit.suggestions.map((item) => `- ${item}`).join("\n")}
 
 ## 出处建议
-${citations.length ? citations.map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n") : "- 暂无候选出处。"}
+${sourceNotes}
 
 ## 需要你确认的地方
-- 这段本地草稿没有新增事实依据；如果要写成论文段落，需要补充具体材料、文献或案例。`;
+- 这段改写没有冒充作者，也没有复制来源原文。
+- 如果要进入正式论文写作，需要补充具体文献、页码和原文证据。`;
 }
 
 function aiPrompt(profile, idea, mode, longformMode = "1200") {
   const citations = findCitationMatches(profile, idea, 10);
-  return `请依据以下“${profile.name}”风格 profile，改写我的观点。
+  return `你不是普通润色器。你要作为“文本特征分析器 + 学术风格转换器”工作，依据以下“${profile.name}”风格 profile，把我的观点改写为风格化学术文本。
 
 重要边界：
 1. 不要冒充该学者本人。
 2. 不要复制任何原文。
 3. 保留我的核心观点、证据和不确定性。
 4. 如需标注出处，只能使用“可引用材料”中的编号，不要虚构页码、篇名或观点。
-5. 输出后说明使用了哪些风格规则，并列出需要核验的事实。
+5. 不要输出普通 ChatGPT 式平滑总结，尤其避免“首先/其次/最后”“综上所述”“值得我们思考”“影响深远”“具有重要意义”等套话。
+6. 输出后必须做风格自检，并列出需要核验的事实。
 
 目标体裁：${mode}
 生成规模：${longformMode}
@@ -865,7 +1061,33 @@ ${profileToMarkdown(profile)}
 ${citations.length ? citations.map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n") : "- 当前 profile 没有足够的引用索引；请只做无出处草稿，并提示需要补充文献。"}
 
 我的观点：
-${idea.trim()}`;
+${idea.trim()}
+
+必须按以下流程输出：
+
+## 论点抽取
+- 问题域:
+- 核心判断:
+- 已有证据:
+- 仍缺证据:
+
+## 风格化改写稿
+要求：
+- 开头先建立历史/思想/概念问题域，不要直接宣布结论。
+- 至少使用一次“并非/不是……而是……”或“不能只……还要……”的概念区分。
+- 至少使用一次“也就是说/换言之/正是在此意义上”的重述推进。
+- 结尾给出有限判断，不要做空泛总结。
+- 如果没有材料支持，必须标注“仍需进一步核验”。
+
+## 风格自检
+- 词汇:
+- 句式:
+- 段落:
+- 论证:
+- 反 ChatGPT 腔检查:
+
+## 需要核验的地方
+- `;
 }
 
 function buildLongformPrompt(profile, idea, mode, longformMode) {
@@ -873,15 +1095,17 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
 
 请输出：
 1. 标题
-2. 正文
-3. 使用的风格规则
-4. 出处标注说明
-5. 需要核验的地方
+2. 论点抽取
+3. 风格化正文
+4. 风格自检
+5. 出处标注说明
+6. 需要核验的地方
 
 正文要求：
 - 用中文学术文体写作。
 - 段落推进要体现：问题域提出、概念区分、文献线索、有限判断。
 - 不要照搬 profile 或引用索引中的句子。
+- 不要使用普通 AI 润色腔，如“首先/其次/最后”“综上所述”“影响深远”“值得我们思考”。
 - 对没有出处支撑的判断，用“仍需进一步核验”标出。`;
 }
 
@@ -923,28 +1147,19 @@ function extractResponseText(data) {
 }
 
 function diagnoseText(profile, text) {
-  const sentences = splitSentences(text);
-  const tokens = tokenize(text);
-  const stats = sentenceStats(sentences);
-  const contrastHits = (profile.markers?.contrast || []).filter((item) => text.includes(item));
-  const causalHits = (profile.markers?.causal || []).filter((item) => text.includes(item));
-  const lexiconHits = (profile.lexicon || []).filter((item) => text.includes(item));
-  const hasProblemFrame = /问题|如何理解|要理解|关乎|意味着|在此意义上/.test(text);
-  let score = 0;
-  score += Math.min(25, contrastHits.length * 6);
-  score += Math.min(20, causalHits.length * 5);
-  score += Math.min(25, lexiconHits.length * 3);
-  score += hasProblemFrame ? 20 : 0;
-  score += stats.mean >= 26 ? 10 : 4;
-  score = Math.min(100, score);
+  const audit = styleAudit(profile, text);
   const findings = [
-    `平均句长：${stats.mean}。`,
-    `命中的转折标记：${contrastHits.join("、") || "无"}`,
-    `命中的因果标记：${causalHits.join("、") || "无"}`,
-    `命中的概念词：${lexiconHits.slice(0, 12).join("、") || "无"}`,
-    hasProblemFrame ? "有问题域/意义转换信号。" : "缺少明显的问题域或意义转换信号。",
+    `平均句长：${audit.stats.mean}。`,
+    `命中的转折标记：${audit.contrastHits.join("、") || "无"}`,
+    `命中的因果标记：${audit.causalHits.join("、") || "无"}`,
+    `命中的重述标记：${audit.reformulationHits.join("、") || "无"}`,
+    `命中的概念词：${audit.lexiconHits.slice(0, 12).join("、") || "无"}`,
+    audit.hasProblemFrame ? "有问题域/意义转换信号。" : "缺少明显的问题域或意义转换信号。",
+    audit.hasBoundedClaim ? "有有限判断或强度校准。" : "结尾判断偏平，需要加边界意识。",
+    audit.generic.hits.length ? `通用 AI 腔命中：${audit.generic.hits.join("、")}。` : "未命中常见通用 AI 套话。",
+    ...audit.suggestions,
   ];
-  return { score, findings };
+  return { score: audit.score, findings };
 }
 
 function renderDiagnosis(result) {
@@ -953,6 +1168,20 @@ function renderDiagnosis(result) {
     <ul class="finding-list">${result.findings.map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}</ul>
   `;
 }
+
+function runStyleRegression() {
+  const profile = activeProfile();
+  const genericText = "AI 工具对学术写作具有重要意义。首先，它提高了写作效率。其次，它能够帮助研究者整理材料。最后，它为学术研究提供了新的视角，值得我们进一步思考。";
+  const sourceText = "AI 工具改变学术写作，不只是提高效率，也改变了知识生产方式。它迫使研究者重新理解材料、论证与作者主体之间的关系。";
+  const transformed = buildCodexStyleDraft(profile, sourceText, "article").draft;
+  return {
+    generic: styleAudit(profile, genericText),
+    transformed: styleAudit(profile, transformed),
+    transformedText: transformed,
+  };
+}
+
+window.runStyleRegression = runStyleRegression;
 
 function download(filename, content, type = "text/plain;charset=utf-8") {
   const blob = new Blob([content], { type });

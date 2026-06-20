@@ -135,7 +135,7 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>输入你的观点</h3>
-                <p>网站本地生成结构化草稿和 AI 调用 prompt。</p>
+                <p>先抽论点，再按 profile 重构段落，并进行反通用 AI 腔自检。</p>
               </div>
               <label class="field-label" for="rewriteMode">目标体裁</label>
               <select id="rewriteMode" class="text-input">
@@ -157,7 +157,7 @@
               <textarea id="ideaInput" class="large-textarea" placeholder="例如：AI 工具改变学术写作，不只是提高效率，也改变了知识生产方式。"></textarea>
 
               <div class="button-row">
-                <button id="draftButton" class="primary-button">生成本地草稿</button>
+                <button id="draftButton" class="primary-button">Codex 风格重构</button>
                 <button id="aiLongformButton">调用模型生成长文</button>
                 <button id="promptButton">生成 AI Prompt</button>
               </div>
@@ -167,7 +167,7 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>输出</h3>
-                <p>本地草稿适合打底；AI Prompt 适合复制到 Codex/ChatGPT。</p>
+                <p>输出包含论点抽取、风格化改写、自检分数和出处建议。</p>
               </div>
               <textarea id="rewriteOutput" class="output-textarea" readonly></textarea>
               <button id="copyRewriteButton" class="wide-button">复制输出</button>
