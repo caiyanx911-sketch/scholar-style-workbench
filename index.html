@@ -40,6 +40,36 @@
             <button id="resetProfilesButton">恢复样例</button>
           </div>
         </section>
+
+        <section class="panel compact">
+          <h2>AI 调用</h2>
+          <label class="field-label" for="apiEndpointInput">接口地址</label>
+          <input id="apiEndpointInput" class="text-input" value="https://api.openai.com/v1/responses" />
+
+          <label class="field-label" for="apiKeyInput">API Key</label>
+          <input id="apiKeyInput" class="text-input" type="password" autocomplete="off" placeholder="sk-..." />
+          <p class="hint">浏览器直连 OpenAI；不勾选保存时只保留到当前会话。</p>
+
+          <div class="button-row">
+            <select id="modelSelect" class="text-input compact-select">
+              <option value="gpt-5.5">gpt-5.5</option>
+              <option value="gpt-5.4">gpt-5.4</option>
+              <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+              <option value="gpt-4.1">gpt-4.1</option>
+            </select>
+            <select id="reasoningSelect" class="text-input compact-select">
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="low">low</option>
+            </select>
+          </div>
+
+          <label class="check-row">
+            <input id="rememberKeyToggle" type="checkbox" />
+            <span>本机保存 Key</span>
+          </label>
+          <button id="saveAiSettingsButton" class="wide-button">保存 AI 设置</button>
+        </section>
       </aside>
 
       <main class="workspace">
@@ -52,6 +82,7 @@
             <button class="tab-button active" data-tab="build" role="tab">建模</button>
             <button class="tab-button" data-tab="rewrite" role="tab">改写</button>
             <button class="tab-button" data-tab="diagnose" role="tab">诊断</button>
+            <button class="tab-button" data-tab="sources" role="tab">文献</button>
             <button class="tab-button" data-tab="rules" role="tab">规则</button>
           </div>
         </header>
@@ -61,15 +92,15 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>导入语料</h3>
-                <p>支持 .txt/.md 或直接粘贴。PDF 先复制文字，后续可加后端提取。</p>
+                <p>支持 .txt/.md/.pdf 或直接粘贴。</p>
               </div>
               <label class="field-label" for="profileNameInput">学者名称</label>
               <input id="profileNameInput" class="text-input" value="新学者" />
 
               <label class="field-label" for="corpusFilesInput">语料文件</label>
               <label class="corpus-file-picker" for="corpusFilesInput">
-                <span>选择 TXT / MD 语料</span>
-                <small>可多选；PDF 请先复制文字到下方</small>
+                <span>选择 TXT / MD / PDF 语料</span>
+                <small>可多选；PDF 在浏览器本地解析</small>
                 <input id="corpusFilesInput" type="file" accept=".txt,.md,.pdf" multiple />
               </label>
               <p id="fileStatus" class="hint">尚未选择文件。</p>
@@ -111,13 +142,22 @@
                 <option value="conclusion">结论段落</option>
               </select>
 
+              <label class="field-label" for="longformMode">长文规模</label>
+              <select id="longformMode" class="text-input">
+                <option value="1200">约 1200 字</option>
+                <option value="2000">约 2000 字</option>
+                <option value="outline">提纲 + 正文</option>
+              </select>
+
               <label class="field-label" for="ideaInput">你的原始观点</label>
               <textarea id="ideaInput" class="large-textarea" placeholder="例如：AI 工具改变学术写作，不只是提高效率，也改变了知识生产方式。"></textarea>
 
               <div class="button-row">
                 <button id="draftButton" class="primary-button">生成本地草稿</button>
+                <button id="aiLongformButton">调用模型生成长文</button>
                 <button id="promptButton">生成 AI Prompt</button>
               </div>
+              <p id="aiStatus" class="hint">尚未调用模型。</p>
             </section>
 
             <section class="tool-surface">
@@ -162,10 +202,22 @@
             <pre id="rulebookView" class="rulebook"></pre>
           </section>
         </section>
+
+        <section id="sourcesTab" class="tab-panel">
+          <section class="tool-surface full">
+            <div class="section-head">
+              <h3>文献与出处</h3>
+              <p>当前 profile 的来源、引文分离和段落结构。</p>
+            </div>
+            <div id="sourcesView" class="sources-view"></div>
+            <button id="exportCitationIndexButton" class="wide-button">导出引用索引 Markdown</button>
+          </section>
+        </section>
       </main>
     </div>
 
     <div id="toast" class="toast" aria-live="polite"></div>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

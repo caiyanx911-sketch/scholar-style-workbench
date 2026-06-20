@@ -309,6 +309,24 @@ h1 {
   padding: 10px 11px;
 }
 
+.compact-select {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+}
+
 .corpus-file-picker {
   position: relative;
   width: 100%;
@@ -356,7 +374,8 @@ h1 {
 }
 
 .analysis-preview,
-.diagnose-output {
+.diagnose-output,
+.sources-view {
   min-height: 420px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -402,6 +421,47 @@ h1 {
   padding: 5px 8px;
   background: #f7f5ef;
   font-size: 12px;
+}
+
+.source-list,
+.citation-list,
+.structure-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.source-item,
+.citation-item,
+.structure-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.source-item strong,
+.citation-item strong,
+.structure-item strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.source-item p,
+.citation-item p,
+.structure-item p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.citation-ref {
+  color: var(--cinnabar);
+  font-weight: 700;
+}
+
+.status-line {
+  min-height: 20px;
 }
 
 .rulebook {
@@ -510,7 +570,8 @@ h1 {
   .large-textarea,
   .output-textarea,
   .analysis-preview,
-  .diagnose-output {
+  .diagnose-output,
+  .sources-view {
     min-height: 300px;
   }
 }
