@@ -189,9 +189,13 @@ h1 {
 
 .profile-item {
   width: 100%;
-  text-align: left;
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface-soft);
 }
 
@@ -203,8 +207,43 @@ h1 {
   box-shadow: 0 8px 18px rgba(159, 23, 56, 0.12);
 }
 
+.profile-select {
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  display: grid;
+  gap: 3px;
+}
+
+.profile-select:hover {
+  border-color: transparent;
+}
+
+.profile-delete {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: rgba(159, 23, 56, 0.18);
+  color: var(--accent-dark);
+  background: rgba(255, 253, 248, 0.74);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.profile-delete:hover {
+  border-color: var(--accent);
+  background: #fff7f3;
+}
+
 .profile-name {
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-meta {

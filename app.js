@@ -289,6 +289,24 @@ function activeProfile() {
   return profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || defaultProfile;
 }
 
+function deleteProfile(profileId) {
+  if (profiles.length <= 1) {
+    showToast("至少保留一个档案。");
+    return;
+  }
+  const targetIndex = profiles.findIndex((profile) => profile.id === profileId);
+  if (targetIndex < 0) return;
+  const deleted = profiles[targetIndex];
+  profiles = profiles.filter((profile) => profile.id !== profileId);
+  if (activeProfileId === profileId) {
+    const nextProfile = profiles[Math.min(targetIndex, profiles.length - 1)] || profiles[0] || normalizeProfile(defaultProfile);
+    activeProfileId = nextProfile.id;
+  }
+  saveProfiles();
+  render();
+  showToast(`已删除「${deleted.name}」。`);
+}
+
 function slugify(text) {
   return (
     text
@@ -334,18 +352,25 @@ function renderProfileList() {
   const list = qs("#profileList");
   list.innerHTML = "";
   profiles.forEach((profile) => {
-    const button = document.createElement("button");
-    button.className = `profile-item${profile.id === activeProfileId ? " active" : ""}`;
-    button.dataset.profileId = profile.id;
-    button.innerHTML = `
-      <span class="profile-name">${escapeHtml(profile.name)}</span>
-      <span class="profile-meta">${profile.stats?.tokens || 0} tokens · ${profile.stats?.documents || 1} sources</span>
+    const item = document.createElement("div");
+    item.className = `profile-item${profile.id === activeProfileId ? " active" : ""}`;
+    item.dataset.profileId = profile.id;
+    item.innerHTML = `
+      <button class="profile-select" type="button">
+        <span class="profile-name">${escapeHtml(profile.name)}</span>
+        <span class="profile-meta">${profile.stats?.tokens || 0} tokens · ${profile.stats?.documents || 1} sources</span>
+      </button>
+      <button class="profile-delete" type="button" title="删除这个档案" aria-label="删除 ${escapeHtml(profile.name)}">×</button>
     `;
-    button.addEventListener("click", () => {
+    item.querySelector(".profile-select").addEventListener("click", () => {
       activeProfileId = profile.id;
       render();
     });
-    list.appendChild(button);
+    item.querySelector(".profile-delete").addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteProfile(profile.id);
+    });
+    list.appendChild(item);
   });
 }
 
@@ -1481,14 +1506,7 @@ function bindEvents() {
   });
 
   qs("#deleteProfileButton").addEventListener("click", () => {
-    const current = activeProfile();
-    if (!window.confirm(`删除「${current.name}」这个本地 profile？`)) return;
-    profiles = profiles.filter((profile) => profile.id !== current.id);
-    if (!profiles.length) profiles = [normalizeProfile(defaultProfile)];
-    activeProfileId = profiles[0].id;
-    saveProfiles();
-    render();
-    showToast("已删除当前 profile。");
+    deleteProfile(activeProfile().id);
   });
 
   qs("#resetProfilesButton").addEventListener("click", () => {
