@@ -96,16 +96,16 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>导入语料</h3>
-                <p>支持 .txt/.md/.pdf 或直接粘贴。</p>
+                <p>支持 .txt/.md/.pdf/.docx 或直接粘贴。</p>
               </div>
               <label class="field-label" for="profileNameInput">学者名称</label>
               <input id="profileNameInput" class="text-input" value="新学者" />
 
               <label class="field-label" for="corpusFilesInput">语料文件</label>
               <label class="corpus-file-picker" for="corpusFilesInput">
-                <span>选择 TXT / MD / PDF 语料</span>
-                <small>可多选；PDF 在浏览器本地解析</small>
-                <input id="corpusFilesInput" type="file" accept=".txt,.md,.pdf" multiple />
+                <span>选择 TXT / MD / PDF / DOCX 语料</span>
+                <small>可多选；PDF/DOCX 在浏览器本地解析</small>
+                <input id="corpusFilesInput" type="file" accept=".txt,.md,.pdf,.docx" multiple />
               </label>
               <p id="fileStatus" class="hint">尚未选择文件。</p>
 
@@ -222,6 +222,7 @@
 
     <div id="toast" class="toast" aria-live="polite"></div>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

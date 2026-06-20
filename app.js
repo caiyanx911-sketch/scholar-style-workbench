@@ -77,11 +77,13 @@ const genericAiPatterns = [
 ];
 
 const zhangStyleHints = {
-  framing: ["问题域", "时代问题", "历史条件", "价值系统", "现代学术", "思想史"],
+  framing: ["问题域", "时代问题", "历史条件", "价值系统", "现代学术", "思想史", "义理", "经史之学", "现代转型", "内在理路", "学术形态", "思想资源"],
   verbs: ["重构", "收摄", "安顿", "导引", "自觉化", "成立", "开出"],
   relation: ["并非", "而是", "不只是", "不能只", "正是在此意义上", "也就是说", "这意味着"],
   bounded: ["在某种意义上", "可能", "似乎", "并不能简单地", "大致可以说"],
 };
+
+const zhangProseFrames = ["现代学术", "思想史", "历史条件", "义理", "经史之学", "现代转型", "价值系统", "内在理路"];
 
 const broadCitationTerms = new Set([
   "哲学",
@@ -334,6 +336,7 @@ function renderProfileList() {
   profiles.forEach((profile) => {
     const button = document.createElement("button");
     button.className = `profile-item${profile.id === activeProfileId ? " active" : ""}`;
+    button.dataset.profileId = profile.id;
     button.innerHTML = `
       <span class="profile-name">${escapeHtml(profile.name)}</span>
       <span class="profile-meta">${profile.stats?.tokens || 0} tokens · ${profile.stats?.documents || 1} sources</span>
@@ -413,6 +416,12 @@ function ensurePdfJs() {
   return pdfjs;
 }
 
+function ensureJsZip() {
+  const JSZip = window.JSZip;
+  if (!JSZip) throw new Error("DOCX 解析库尚未加载，请刷新页面后重试。");
+  return JSZip;
+}
+
 async function parsePdfFile(file) {
   const pdfjs = ensurePdfJs();
   const arrayBuffer = await file.arrayBuffer();
@@ -434,6 +443,72 @@ async function parsePdfFile(file) {
     pages: pages.length,
     text: pages.map((page) => `[[p.${page.page}]] ${page.text}`).join("\n\n"),
     pageTexts: pages,
+  };
+}
+
+function parseDocxParagraphs(xmlText) {
+  if (!xmlText) return [];
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(xmlText, "application/xml");
+  if (xml.getElementsByTagName("parsererror").length) {
+    throw new Error("DOCX XML 解析失败。");
+  }
+
+  function collectText(node, pieces) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const localName = node.localName;
+    if (localName === "t") {
+      pieces.push(node.textContent || "");
+      return;
+    }
+    if (localName === "tab") {
+      pieces.push("\t");
+      return;
+    }
+    if (localName === "br" || localName === "cr") {
+      pieces.push("\n");
+      return;
+    }
+    Array.from(node.childNodes).forEach((child) => collectText(child, pieces));
+  }
+
+  return Array.from(xml.getElementsByTagNameNS("*", "p"))
+    .map((paragraph) => {
+      const pieces = [];
+      collectText(paragraph, pieces);
+      return pieces.join("").replace(/\u00a0/g, " ").trim();
+    })
+    .filter(Boolean);
+}
+
+async function readZipText(zip, path) {
+  const entry = zip.file(path);
+  return entry ? entry.async("text") : "";
+}
+
+async function parseDocxFile(file) {
+  const JSZip = ensureJsZip();
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const bodyXml = await readZipText(zip, "word/document.xml");
+  if (!bodyXml) throw new Error("未找到 DOCX 正文。");
+
+  const body = parseDocxParagraphs(bodyXml);
+  const footnotes = parseDocxParagraphs(await readZipText(zip, "word/footnotes.xml"));
+  const endnotes = parseDocxParagraphs(await readZipText(zip, "word/endnotes.xml"));
+  const notes = [...footnotes, ...endnotes]
+    .map((note) => note.replace(/\s+/g, " ").trim())
+    .filter((note) => note && !/^(separator|continuationSeparator)$/i.test(note));
+  const noteText = notes.length
+    ? `\n\n[[notes 脚注/尾注]]\n${notes.map((note, index) => `[注${index + 1}] ${note}`).join("\n")}`
+    : "";
+
+  return {
+    title: file.name.replace(/\.docx$/i, ""),
+    type: "docx",
+    pages: null,
+    text: `${body.join("\n\n")}${noteText}`.trim(),
+    pageTexts: null,
+    notes: notes.length,
   };
 }
 
@@ -710,6 +785,11 @@ async function readSelectedFiles(files) {
         docs.push(await parsePdfFile(file));
         continue;
       }
+      if (/\.docx$/i.test(file.name)) {
+        qs("#fileStatus").textContent = `正在解析 DOCX：${file.name}`;
+        docs.push(await parseDocxFile(file));
+        continue;
+      }
       if (/\.(txt|md)$/i.test(file.name)) {
         docs.push({
           title: file.name.replace(/\.(txt|md)$/i, ""),
@@ -718,7 +798,9 @@ async function readSelectedFiles(files) {
           text: await file.text(),
           pageTexts: null,
         });
+        continue;
       }
+      errors.push(`${file.name}: 暂不支持该文件类型。`);
     } catch (error) {
       errors.push(`${file.name}: ${error.message}`);
     }
@@ -905,14 +987,83 @@ function extractArgument(text) {
   };
 }
 
+function isZhangProfile(profile) {
+  return profile.id === "zhang-zhiqiang" || profile.name === "张志强";
+}
+
+function uniqueItems(items) {
+  return [...new Set(items.filter(Boolean))];
+}
+
+function compactClause(text, limit = 34) {
+  const clean = text
+    .replace(/^[，,；;。！？\s]+|[，,；;。！？\s]+$/g, "")
+    .replace(/^(把|将|对|关于|围绕)/, "")
+    .replace(/\s+/g, "");
+  return clean.length > limit ? `${clean.slice(0, limit)}…` : clean;
+}
+
+function mineIdeaTerms(text) {
+  const quoted = Array.from(text.matchAll(/[《“"]([^》”"]{2,20})[》”"]/g)).map((match) => match[1]);
+  const conceptual = Array.from(text.matchAll(/[\u4e00-\u9fffA-Za-z0-9·]{2,14}(?:思想|义理|危机|进化论|齐物论|经世|问题|资源|处境|转型|现代性|佛教|儒学|庄学|西学|佛学|唯识学|阿赖耶识|本体论|主体|传统|学术)/g))
+    .map((match) => match[0].replace(/^的/, ""));
+  const named = Array.from(text.matchAll(/(?:章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|佛教|唯识学|今文经学|理学|庄学|儒学|西学|现代性|阿赖耶识|真如|良知)/g))
+    .map((match) => match[0]);
+  return uniqueItems([...named, ...quoted, ...conceptual]).slice(0, 12);
+}
+
+function buildProblemTopic(argument, terms) {
+  const core = terms
+    .filter((term) => term.length >= 2 && !/^(问题|思想|历史|概念|价值|主体|传统|现代)$/.test(term))
+    .slice(0, 3);
+  if (core.length >= 2) return `${core.join("、")}之间的关系`;
+  if (core.length === 1) return `${core[0]}所展开的问题`;
+  return compactClause(argument.topic, 28) || "这个问题";
+}
+
+function extractContrastFrame(text) {
+  const match = text.match(/(?:并不是|不只是|并非|不是)([^。；;，,]{2,80})[，,；;]?(?:而是|而在于)([^。；;]{2,100})/);
+  if (!match) return null;
+  return {
+    rejected: compactClause(match[1], 28),
+    affirmed: compactClause(match[2], 40),
+  };
+}
+
 function pickProfileTerms(profile, idea, count = 8) {
   const lexicon = profile.lexicon || [];
+  const ideaTerms = mineIdeaTerms(idea);
   const hits = lexicon.filter((term) => idea.includes(term));
-  const zhangFirst = profile.id === "zhang-zhiqiang" || profile.name === "张志强";
-  const fallback = zhangFirst
-    ? [...new Set([...zhangStyleHints.framing, ...hits, ...lexicon, ...zhangStyleHints.verbs])]
-    : [...new Set([...hits, ...lexicon, ...zhangStyleHints.framing, ...zhangStyleHints.verbs])];
+  const fallback = isZhangProfile(profile)
+    ? uniqueItems([...ideaTerms, ...zhangStyleHints.framing, ...hits, ...lexicon, ...zhangStyleHints.verbs])
+    : uniqueItems([...ideaTerms, ...hits, ...lexicon, ...zhangStyleHints.framing, ...zhangStyleHints.verbs]);
   return fallback.filter(Boolean).slice(0, count);
+}
+
+function profileStyleLexicon(profile) {
+  return isZhangProfile(profile)
+    ? uniqueItems([...(profile.lexicon || []), ...zhangStyleHints.framing, ...zhangStyleHints.verbs])
+    : (profile.lexicon || []);
+}
+
+function pickFrameTerms(profile, idea) {
+  const lexiconHits = (profile.lexicon || []).filter((term) => idea.includes(term));
+  const pool = isZhangProfile(profile)
+    ? uniqueItems([...zhangProseFrames, ...lexiconHits, ...(profile.lexicon || []), ...zhangStyleHints.framing])
+    : uniqueItems([...lexiconHits, ...(profile.lexicon || []), ...zhangStyleHints.framing]);
+  return pool.slice(0, 5);
+}
+
+function uniqueCitationRefs(citations, limit = 3) {
+  const seen = new Set();
+  const refs = [];
+  citations.forEach((entry) => {
+    const ref = formatCitationRef(entry);
+    if (seen.has(ref)) return;
+    seen.add(ref);
+    refs.push(ref);
+  });
+  return refs.slice(0, limit);
 }
 
 function antiGenericAudit(text) {
@@ -934,7 +1085,7 @@ function styleAudit(profile, text) {
   const contrastHits = (profile.markers?.contrast || []).filter((item) => text.includes(item));
   const causalHits = (profile.markers?.causal || []).filter((item) => text.includes(item));
   const reformulationHits = (profile.markers?.reformulation || []).filter((item) => text.includes(item));
-  const lexiconHits = (profile.lexicon || []).filter((item) => text.includes(item));
+  const lexiconHits = profileStyleLexicon(profile).filter((item) => text.includes(item));
   const hasProblemFrame = /问题域|时代问题|历史条件|要理解|如何理解|关乎|意味着|在此意义上/.test(text);
   const hasBoundedClaim = /在某种意义上|可能|或许|似乎|并不能简单地|大致可以说|暂时只能说/.test(text);
   const generic = antiGenericAudit(text);
@@ -976,25 +1127,33 @@ function buildAuditSuggestions(audit) {
 function buildCodexStyleDraft(profile, idea, mode) {
   const cleanIdea = idea.trim().replace(/\s+/g, " ");
   const argument = extractArgument(cleanIdea);
-  const thesis = argument.thesis.replace(/[。！？!?]+$/, "");
   const terms = pickProfileTerms(profile, cleanIdea, 8);
-  const termA = terms[0] || "问题域";
-  const termB = terms[1] || "价值系统";
-  const termC = terms[2] || "历史条件";
-  const termD = terms[3] || "主体";
+  const frameTerms = pickFrameTerms(profile, cleanIdea);
+  const subject = cleanIdea.match(/(章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复)/)?.[0] || terms[0] || "主体";
+  const focusTerms = terms.filter((term) => term !== subject && !term.includes(subject)).slice(0, 4);
+  const termA = focusTerms[0] || terms[0] || "问题域";
+  const termB = focusTerms[1] || terms[1] || "价值系统";
+  const termC = frameTerms[0] || terms[2] || "历史条件";
+  const termD = frameTerms[1] || terms[3] || "主体";
+  const termE = frameTerms[2] || "思想史";
   const citations = findCitationMatches(profile, cleanIdea, 6);
+  const refs = uniqueCitationRefs(citations, 3);
+  const topic = buildProblemTopic(argument, terms);
+  const contrast = extractContrastFrame(cleanIdea);
+  const rejected = contrast?.rejected || `把${termA}还原为单一来源`;
+  const affirmed = contrast?.affirmed || `${termA}在${termC}中的重新组织`;
   const sourceClause = citations.length
-    ? `从现有材料看，${citations.map(formatCitationRef).slice(0, 3).join("、")} 可以作为进一步展开这一判断的文献线索；`
+    ? `从现有材料看，${refs.join("、")} 可以作为进一步核验的文本入口；`
     : "在尚未补入更具体文献之前，这一判断只能作为问题意识的初步展开；";
   const voicePrefix = mode === "lecture" ? "在我看来，" : "";
   const intro =
     mode === "intro"
-      ? `要把“${argument.topic}”处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
-      : `${voicePrefix}要理解“${argument.topic}”，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉到${termA}、${termB}与${termC}之间的重新配置。`;
+      ? `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
+      : `${voicePrefix}要理解${topic}，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉到${termA}如何在${termC}、${termD}与${termE}之间获得重新配置。`;
   const middle =
-    `如果说通常的表述容易把这一点理解为“${thesis}”，那么更需要辨明的是，这一判断并非只是对某一经验现象的概括，而是关乎相关概念如何被组织、${termD}如何在其中安顿自身位置的问题。也就是说，真正需要展开的，不是把原命题再说得更顺畅，而是说明它为什么会在特定的历史和思想关系中成为一个问题；这意味着，改写的任务并不只是修饰语句，而是重新安排问题、概念与判断之间的层次。`;
+    `如果说通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出它的理论重心。也就是说，${termA}在这里并非一个孤立的义理来源，而是使${termB}、${termC}与${termD}发生重新联结的枢纽；${subject}所完成的，也不是把某种外来的概念简单移入中国思想，而是在既有知识传统、现实危机和新的解释需求之间，重新安排可以被论证的思想关系。`;
   const close =
-    `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${terms.slice(0, 4).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要更具体的文本材料来支撑其历史位置和理论边界。`;
+    `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${uniqueItems([subject, termA, termB, termC]).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
   return {
     argument,
     citations,
