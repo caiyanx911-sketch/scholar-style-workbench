@@ -97,6 +97,7 @@
           <div class="mode-controls" role="tablist" aria-label="工作区">
             <button class="tab-button active" data-tab="build" role="tab">建模</button>
             <button class="tab-button" data-tab="rewrite" role="tab">改写</button>
+            <button class="tab-button" data-tab="blend" role="tab">融合</button>
             <button class="tab-button" data-tab="diagnose" role="tab">诊断</button>
             <button class="tab-button" data-tab="sources" role="tab">文献</button>
             <button class="tab-button" data-tab="rules" role="tab">规则</button>
@@ -193,6 +194,74 @@
               </div>
               <textarea id="rewriteOutput" class="output-textarea" readonly></textarea>
               <button id="copyRewriteButton" class="wide-button">复制输出</button>
+            </section>
+          </div>
+        </section>
+
+        <section id="blendTab" class="tab-panel">
+          <div class="section-grid">
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>交叉风格调度</h3>
+                <p>把两个 profile 的概念词、段落动作和句长节奏融合成复合学术声线。</p>
+              </div>
+
+              <div class="blend-grid">
+                <div>
+                  <label class="field-label" for="blendProfileASelect">风格 A</label>
+                  <select id="blendProfileASelect" class="text-input"></select>
+                </div>
+                <div>
+                  <label class="field-label" for="blendProfileBSelect">风格 B</label>
+                  <select id="blendProfileBSelect" class="text-input"></select>
+                </div>
+              </div>
+
+              <div class="blend-meter">
+                <div class="field-row">
+                  <label class="field-label" for="blendWeightInput">调度比例</label>
+                  <span id="blendWeightLabel" class="blend-percent">50% / 50%</span>
+                </div>
+                <input id="blendWeightInput" class="range-input" type="range" min="0" max="100" step="5" value="50" />
+                <p class="hint">百分比表示结构权重，不复制任何作者原句；比例越高，该 profile 的概念词和段落推进越占主导。</p>
+              </div>
+
+              <label class="field-label" for="blendModeSelect">目标体裁</label>
+              <select id="blendModeSelect" class="text-input">
+                <option value="article">论文段落</option>
+                <option value="lecture">讲稿表达</option>
+                <option value="intro">导论开头</option>
+                <option value="concept">概念解释</option>
+                <option value="conclusion">结论段落</option>
+              </select>
+
+              <label class="field-label" for="blendLongformMode">长文规模</label>
+              <select id="blendLongformMode" class="text-input">
+                <option value="1200">约 1200 字</option>
+                <option value="2000">约 2000 字</option>
+                <option value="3500">约 3500 字</option>
+                <option value="outline">提纲 + 正文</option>
+              </select>
+
+              <label class="field-label" for="blendIdeaInput">你的原始观点</label>
+              <p class="hint">适合把单一作者痕迹降下来，形成更原创、更难被归入某一位学者的复合表达。</p>
+              <textarea id="blendIdeaInput" class="large-textarea" placeholder="把要改写的观点、草稿或章节材料粘贴到这里。"></textarea>
+
+              <div class="button-row">
+                <button id="blendDraftButton" class="primary-button">生成融合稿</button>
+                <button id="blendAiLongformButton">调用模型生成</button>
+                <button id="blendPromptButton">生成融合 Prompt</button>
+              </div>
+              <p id="blendStatus" class="hint">未调用模型。</p>
+            </section>
+
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>融合输出</h3>
+                <p>输出会标明比例、证据边界和待核验项，避免冒充任一学者。</p>
+              </div>
+              <textarea id="blendOutput" class="output-textarea" readonly></textarea>
+              <button id="copyBlendButton" class="wide-button">复制融合结果</button>
             </section>
           </div>
         </section>

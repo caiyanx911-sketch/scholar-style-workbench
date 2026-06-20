@@ -347,6 +347,7 @@ function render() {
   renderActiveTitle();
   renderBuildState();
   renderSelectedFiles();
+  renderBlendControls();
   renderRulebook();
   renderSourcesView();
   renderAiSettings();
@@ -399,6 +400,29 @@ function renderAiSettings() {
   qs("#modelSelect").value = aiSettings.model || "gpt-5.5";
   qs("#reasoningSelect").value = aiSettings.reasoning || "medium";
   qs("#rememberKeyToggle").checked = Boolean(aiSettings.rememberKey);
+}
+
+function renderBlendControls() {
+  const selectA = qs("#blendProfileASelect");
+  const selectB = qs("#blendProfileBSelect");
+  if (!selectA || !selectB) return;
+  const previousA = selectA.value || activeProfileId;
+  const previousB = selectB.value || profiles.find((profile) => profile.id !== previousA)?.id || previousA;
+  const options = profiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`).join("");
+  selectA.innerHTML = options;
+  selectB.innerHTML = options;
+  selectA.value = profiles.some((profile) => profile.id === previousA) ? previousA : activeProfileId;
+  const fallbackB = profiles.find((profile) => profile.id !== selectA.value)?.id || selectA.value;
+  selectB.value = profiles.some((profile) => profile.id === previousB) ? previousB : fallbackB;
+  updateBlendWeightLabel();
+}
+
+function updateBlendWeightLabel() {
+  const weightInput = qs("#blendWeightInput");
+  const label = qs("#blendWeightLabel");
+  if (!weightInput || !label) return;
+  const weightA = Number(weightInput.value || 50);
+  label.textContent = `${weightA}% / ${100 - weightA}%`;
 }
 
 function formatFileSize(bytes) {
@@ -1392,6 +1416,98 @@ function uniqueCitationRefs(citations, limit = 3) {
   return refs.slice(0, limit);
 }
 
+function weightedAverage(valueA, valueB, weightA) {
+  const a = Number(valueA || 0);
+  const b = Number(valueB || 0);
+  return Number(((a * weightA + b * (100 - weightA)) / 100).toFixed(2));
+}
+
+function blendWeightedList(itemsA = [], itemsB = [], weightA = 50, limit = 24) {
+  const quotaA = Math.max(0, Math.min(limit, Math.round((limit * weightA) / 100)));
+  const quotaB = Math.max(0, limit - quotaA);
+  return uniqueItems([
+    ...itemsA.slice(0, quotaA),
+    ...itemsB.slice(0, quotaB),
+    ...itemsA,
+    ...itemsB,
+  ]).filter((item) => item && (typeof item !== "string" || isContentTerm(item))).slice(0, limit);
+}
+
+function blendMoveList(movesA = [], movesB = [], weightA = 50, limit = 5) {
+  const counts = new Map();
+  movesA.forEach((entry) => counts.set(entry.item, (counts.get(entry.item) || 0) + (entry.count || 1) * weightA));
+  movesB.forEach((entry) => counts.set(entry.item, (counts.get(entry.item) || 0) + (entry.count || 1) * (100 - weightA)));
+  return Array.from(counts.entries())
+    .map(([item, count]) => ({ item, count: Number((count / 100).toFixed(2)) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+function createBlendedProfile(profileA, profileB, weightA = 50) {
+  const weight = Math.max(0, Math.min(100, Number(weightA) || 50));
+  const weightB = 100 - weight;
+  const lexicon = blendWeightedList(profileA.lexicon || [], profileB.lexicon || [], weight, 32);
+  return {
+    id: `blend-${profileA.id}-${profileB.id}-${weight}`,
+    name: `${profileA.name} ${weight}% × ${profileB.name} ${weightB}%`,
+    createdAt: new Date().toISOString().slice(0, 10),
+    source: `交叉风格临时 profile：${profileA.name} ${weight}% / ${profileB.name} ${weightB}%`,
+    stats: {
+      documents: (profileA.stats?.documents || 0) + (profileB.stats?.documents || 0),
+      tokens: (profileA.stats?.tokens || 0) + (profileB.stats?.tokens || 0),
+      sentences: (profileA.stats?.sentences || 0) + (profileB.stats?.sentences || 0),
+      paragraphs: (profileA.stats?.paragraphs || 0) + (profileB.stats?.paragraphs || 0),
+      avgSentenceLength: weightedAverage(profileA.stats?.avgSentenceLength, profileB.stats?.avgSentenceLength, weight),
+      sentenceStdev: weightedAverage(profileA.stats?.sentenceStdev, profileB.stats?.sentenceStdev, weight),
+    },
+    lexicon,
+    pairs: blendWeightedList(profileA.pairs || [], profileB.pairs || [], weight, 10),
+    markers: {
+      contrast: blendWeightedList(profileA.markers?.contrast || [], profileB.markers?.contrast || [], weight, 8),
+      causal: blendWeightedList(profileA.markers?.causal || [], profileB.markers?.causal || [], weight, 8),
+      reformulation: blendWeightedList(profileA.markers?.reformulation || [], profileB.markers?.reformulation || [], weight, 8),
+      hedge: blendWeightedList(profileA.markers?.hedge || [], profileB.markers?.hedge || [], weight, 8),
+    },
+    sentenceRules: [
+      `句长目标按比例融合：${profileA.name} ${weight}% / ${profileB.name} ${weightB}%。`,
+      "优先使用两个 profile 的共有学术动作，其次保留各自有辨识度的连接和限定方式。",
+      "避免任何一方的标志性句式过度集中出现。",
+    ],
+    paragraphRules: [
+      "开头建立复合问题域，不直接显露单一作者框架。",
+      "中段混合两方的段落动作：一方提供结构推进，另一方提供概念或材料线索。",
+      "结尾做有限判断和证据边界标注，不冒充任一学者。",
+    ],
+    argumentPatterns: blendWeightedList(profileA.argumentPatterns || [], profileB.argumentPatterns || [], weight, 10),
+    negative: [
+      "不要冒充任一学者本人。",
+      "不要复制任一 profile 的原文句子。",
+      "不要把融合稿写成单一作者可辨识的口吻。",
+      "不要为了弱化风格痕迹而牺牲论证和证据边界。",
+    ],
+    sources: [...(profileA.sources || []), ...(profileB.sources || [])],
+    citationIndex: [...(profileA.citationIndex || []), ...(profileB.citationIndex || [])].slice(0, 360),
+    voiceStats: {
+      authorChars: (profileA.voiceStats?.authorChars || 0) + (profileB.voiceStats?.authorChars || 0),
+      quotedChars: (profileA.voiceStats?.quotedChars || 0) + (profileB.voiceStats?.quotedChars || 0),
+      quoteSegments: (profileA.voiceStats?.quoteSegments || 0) + (profileB.voiceStats?.quoteSegments || 0),
+      note: "交叉风格临时 profile 的统计只用于本次调度。",
+    },
+    paragraphModel: {
+      avgParagraphLength: weightedAverage(profileA.paragraphModel?.avgParagraphLength, profileB.paragraphModel?.avgParagraphLength, weight),
+      openingMoves: blendMoveList(profileA.paragraphModel?.openingMoves || [], profileB.paragraphModel?.openingMoves || [], weight),
+      middleMoves: blendMoveList(profileA.paragraphModel?.middleMoves || [], profileB.paragraphModel?.middleMoves || [], weight),
+      closingMoves: blendMoveList(profileA.paragraphModel?.closingMoves || [], profileB.paragraphModel?.closingMoves || [], weight),
+    },
+    blendMeta: {
+      profileA: profileA.name,
+      profileB: profileB.name,
+      weightA: weight,
+      weightB,
+    },
+  };
+}
+
 function antiGenericAudit(text) {
   const hits = genericAiPatterns.filter((pattern) => text.includes(pattern));
   const sentenceLengths = splitSentences(text).map((sentence) => tokenize(sentence).length);
@@ -1679,6 +1795,25 @@ ${sourceNotes}
 - 如果要进入正式论文写作，需要补充具体文献、页码和原文证据。`;
 }
 
+function blendHeader(blended) {
+  const meta = blended.blendMeta || {};
+  return `## 交叉风格设置
+
+- 风格 A: ${meta.profileA || "Profile A"} ${meta.weightA ?? 50}%
+- 风格 B: ${meta.profileB || "Profile B"} ${meta.weightB ?? 50}%
+- 使用原则: 百分比只表示结构调度，不复制原句，不冒充任一学者；目标是形成复合学术声线，降低单一作者痕迹。
+`;
+}
+
+function blendLocalDraft(profileA, profileB, weightA, idea, mode) {
+  const cleanIdea = idea.trim();
+  if (!cleanIdea) return "请先输入你的观点。";
+  const blended = createBlendedProfile(profileA, profileB, weightA);
+  return `${blendHeader(blended)}
+
+${localDraft(blended, cleanIdea, mode)}`;
+}
+
 function aiPrompt(profile, idea, mode, longformMode = "1200") {
   const citations = findCitationMatches(profile, idea, 10);
   const pack = buildIdeaEvidencePack(idea);
@@ -1738,6 +1873,18 @@ ${idea.trim()}
 - `;
 }
 
+function blendAiPrompt(profileA, profileB, weightA, idea, mode, longformMode = "1200") {
+  const blended = createBlendedProfile(profileA, profileB, weightA);
+  return `${aiPrompt(blended, idea, mode, longformMode)}
+
+交叉风格特别规则：
+1. 这是复合学术声线，不是模仿或冒充 ${profileA.name} 或 ${profileB.name}。
+2. 调度比例为 ${profileA.name} ${blended.blendMeta.weightA}% / ${profileB.name} ${blended.blendMeta.weightB}%；比例越高，只表示概念词、段落动作和句长节奏权重越高。
+3. 不要在正文中写“像某某”“某某式”等暴露风格来源的表达。
+4. 不要连续使用任何一方高度标志性的固定句式；优先把两方规则改造成原创表达。
+5. 保持证据边界：无法由原始观点或引用索引支撑的判断，必须标为“仍需进一步核验”。`;
+}
+
 function buildLongformPrompt(profile, idea, mode, longformMode) {
   return `${aiPrompt(profile, idea, mode, longformMode)}
 
@@ -1758,6 +1905,16 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
 - 对没有出处支撑的判断，用“仍需进一步核验”标出。
 - 如果原始观点很长，先按材料块重组论证，不要遗漏后半部分。
 - 材料使用表必须列出：改写后的关键判断 -> 原始观点编号 [P/E/U] 或文献编号 [S] -> 是否需要进一步核验。`;
+}
+
+function buildBlendLongformPrompt(profileA, profileB, weightA, idea, mode, longformMode) {
+  const blended = createBlendedProfile(profileA, profileB, weightA);
+  return `${buildLongformPrompt(blended, idea, mode, longformMode)}
+
+交叉风格长文要求：
+- 全文按 ${profileA.name} ${blended.blendMeta.weightA}% / ${profileB.name} ${blended.blendMeta.weightB}% 做风格调度。
+- 不要在任何标题或正文中暴露“仿某某”的意图。
+- 让融合后的文本呈现为作者自己的原创学术声线，而不是两种风格拼贴。`;
 }
 
 async function callOpenAIResponse(prompt) {
@@ -1842,6 +1999,13 @@ function download(filename, content, type = "text/plain;charset=utf-8") {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function selectedBlendConfig() {
+  const profileA = profiles.find((profile) => profile.id === qs("#blendProfileASelect").value) || activeProfile();
+  const profileB = profiles.find((profile) => profile.id === qs("#blendProfileBSelect").value) || profiles.find((profile) => profile.id !== profileA.id) || profileA;
+  const weightA = Number(qs("#blendWeightInput").value || 50);
+  return { profileA, profileB, weightA };
 }
 
 function bindEvents() {
@@ -1935,6 +2099,46 @@ function bindEvents() {
 
   qs("#copyRewriteButton").addEventListener("click", async () => {
     await copyText(qs("#rewriteOutput").value);
+    showToast("已复制。");
+  });
+
+  qs("#blendWeightInput").addEventListener("input", updateBlendWeightLabel);
+  qs("#blendProfileASelect").addEventListener("change", updateBlendWeightLabel);
+  qs("#blendProfileBSelect").addEventListener("change", updateBlendWeightLabel);
+
+  qs("#blendDraftButton").addEventListener("click", () => {
+    const { profileA, profileB, weightA } = selectedBlendConfig();
+    qs("#blendOutput").value = blendLocalDraft(profileA, profileB, weightA, qs("#blendIdeaInput").value, qs("#blendModeSelect").value);
+  });
+
+  qs("#blendPromptButton").addEventListener("click", () => {
+    const { profileA, profileB, weightA } = selectedBlendConfig();
+    qs("#blendOutput").value = blendAiPrompt(profileA, profileB, weightA, qs("#blendIdeaInput").value, qs("#blendModeSelect").value, qs("#blendLongformMode").value);
+  });
+
+  qs("#blendAiLongformButton").addEventListener("click", async () => {
+    const idea = qs("#blendIdeaInput").value.trim();
+    if (!idea) {
+      showToast("请先输入你的观点。");
+      return;
+    }
+    const { profileA, profileB, weightA } = selectedBlendConfig();
+    qs("#blendAiLongformButton").disabled = true;
+    qs("#blendStatus").textContent = "正在调用模型...";
+    try {
+      const prompt = buildBlendLongformPrompt(profileA, profileB, weightA, idea, qs("#blendModeSelect").value, qs("#blendLongformMode").value);
+      qs("#blendOutput").value = await callOpenAIResponse(prompt);
+      qs("#blendStatus").textContent = "模型生成完成。";
+    } catch (error) {
+      qs("#blendStatus").textContent = `调用失败：${error.message}`;
+      showToast("模型调用失败。");
+    } finally {
+      qs("#blendAiLongformButton").disabled = false;
+    }
+  });
+
+  qs("#copyBlendButton").addEventListener("click", async () => {
+    await copyText(qs("#blendOutput").value);
     showToast("已复制。");
   });
 
