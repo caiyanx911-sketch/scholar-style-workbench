@@ -230,7 +230,13 @@ const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 function loadProfiles() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    if (Array.isArray(stored) && stored.length) return stored.map(normalizeProfile);
+    if (Array.isArray(stored) && stored.length) {
+      const normalized = stored.map(normalizeProfile);
+      if (JSON.stringify(normalized) !== JSON.stringify(stored)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+      }
+      return normalized;
+    }
   } catch {
     // Ignore malformed storage.
   }
@@ -241,17 +247,79 @@ function saveProfiles() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 }
 
+function hasGarbageShape(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return true;
+  if (/[\uFFFD\uE000-\uF8FF□■◆◇�]/.test(clean)) return true;
+  if (/(.)\1{2,}/u.test(clean)) return true;
+  if (/(.{2})\1{1,}/u.test(clean)) return true;
+  const chars = Array.from(clean.replace(/[^\u4e00-\u9fffA-Za-z0-9]/g, ""));
+  if (chars.length >= 4 && new Set(chars).size <= 2) return true;
+  return false;
+}
+
+function cleanDisplayTerm(term) {
+  return normalizeTerm(String(term || "").trim().replace(/\s+/g, ""));
+}
+
+function sanitizeTermList(items, limit = 32) {
+  return uniqueItems((items || []).map(cleanDisplayTerm))
+    .filter((item) => item && !hasGarbageShape(item) && isContentTerm(item))
+    .slice(0, limit);
+}
+
+function sanitizeMarkerList(items, limit = 12) {
+  return uniqueItems((items || []).map((item) => String(item || "").trim()).filter(Boolean))
+    .filter((item) => item.length <= 12 && !hasGarbageShape(item))
+    .slice(0, limit);
+}
+
+function sanitizePairList(items, limit = 10) {
+  return uniqueItems((items || []).map((item) => String(item || "").trim()).filter(Boolean))
+    .filter((item) => !hasGarbageShape(item) && item.split("/").every((part) => {
+      const clean = cleanDisplayTerm(part);
+      return clean.length >= 2 && clean.length <= 8 && !hasGarbageShape(clean);
+    }))
+    .slice(0, limit);
+}
+
+function sanitizeMoveList(items, limit = 8) {
+  return (items || [])
+    .map((entry) => ({ item: String(entry?.item || "").trim(), count: Number(entry?.count || 0) }))
+    .filter((entry) => entry.item && !hasGarbageShape(entry.item) && entry.item.length <= 12)
+    .slice(0, limit);
+}
+
+function sanitizeParagraphModel(model) {
+  if (!model) return null;
+  return {
+    ...model,
+    openingMoves: sanitizeMoveList(model.openingMoves),
+    middleMoves: sanitizeMoveList(model.middleMoves),
+    closingMoves: sanitizeMoveList(model.closingMoves),
+  };
+}
+
 function normalizeProfile(profile) {
   const base = profile?.id === defaultProfile.id ? defaultProfile : {};
+  const mergedMarkers = { ...(base.markers || {}), ...(profile?.markers || {}) };
+  const paragraphModel = profile?.paragraphModel || base.paragraphModel || null;
   return {
     ...base,
     ...profile,
     stats: { ...(base.stats || {}), ...(profile?.stats || {}) },
-    markers: { ...(base.markers || {}), ...(profile?.markers || {}) },
+    lexicon: sanitizeTermList(profile?.lexicon || base.lexicon || [], 32),
+    pairs: sanitizePairList(profile?.pairs || base.pairs || [], 12),
+    markers: {
+      contrast: sanitizeMarkerList(mergedMarkers.contrast || [], 12),
+      causal: sanitizeMarkerList(mergedMarkers.causal || [], 12),
+      reformulation: sanitizeMarkerList(mergedMarkers.reformulation || [], 12),
+      hedge: sanitizeMarkerList(mergedMarkers.hedge || [], 12),
+    },
     sources: profile?.sources || base.sources || [],
     citationIndex: profile?.citationIndex || base.citationIndex || [],
     voiceStats: profile?.voiceStats || base.voiceStats || null,
-    paragraphModel: profile?.paragraphModel || base.paragraphModel || null,
+    paragraphModel: sanitizeParagraphModel(paragraphModel),
   };
 }
 
@@ -781,7 +849,7 @@ function normalizeTerm(term) {
 function isContentTerm(term) {
   const clean = normalizeTerm(term);
   if (clean.length < 2 || clean.length > 8) return false;
-  if (/^(.)\1{2,}$/.test(clean) || /(.)\1{3,}/.test(clean)) return false;
+  if (hasGarbageShape(clean)) return false;
   if (markerStopWords.has(clean)) return false;
   if (/[的了一是在和与及并而则其这那之以于把被所]/.test(clean.slice(0, 1))) return false;
   if (/[的了和与及并而则其这那之以于把被所]/.test(clean.slice(-1))) return false;
@@ -972,6 +1040,8 @@ function renderAnalysisPreview(profile) {
   const signals = profile.rawSignals || {};
   const voice = profile.voiceStats || {};
   const paragraphModel = profile.paragraphModel || {};
+  const lexicon = sanitizeTermList(profile.lexicon || [], 32);
+  const contrastMarkers = sanitizeMarkerList(markers.contrast || [], 12);
   qs("#analysisPreview").innerHTML = `
     <div class="metric-grid">
       <div class="metric"><strong>${profile.stats.tokens}</strong><span>tokens</span></div>
@@ -986,7 +1056,7 @@ function renderAnalysisPreview(profile) {
       <span class="tag">引文占比 ${voice.quoteRatio != null ? `${Math.round(voice.quoteRatio * 100)}%` : "未统计"}</span>
     </div>
     <h4>概念词</h4>
-    <div class="tag-list">${profile.lexicon.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}</div>
+    <div class="tag-list">${lexicon.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("") || '<span class="tag">未提取</span>'}</div>
     <h4>转折标记</h4>
     <div class="tag-list">${(markers.contrast || []).map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("") || '<span class="tag">未检出</span>'}</div>
     <h4>段落结构</h4>
