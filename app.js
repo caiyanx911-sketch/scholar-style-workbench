@@ -1511,16 +1511,45 @@ function termsForRewriteUnit(profile, unitText, fallbackTerms = [], limit = 6) {
     .slice(0, limit);
 }
 
+function rewriteClaimBody(text, limit = 88) {
+  return compactClause(text || "", limit)
+    .replace(/并不是/g, "不宜被简单看作")
+    .replace(/不只是/g, "不能只被理解为")
+    .replace(/不是/g, "不能被简单归入")
+    .replace(/而是/g, "更应放在")
+    .replace(/认为/g, "所提出的判断是")
+    .replace(/因此/g, "由此看")
+    .replace(/所以/g, "由此")
+    .replace(/具有重要的研究价值/g, "需要在具体论证中重新说明其价值")
+    .replace(/具有重要价值/g, "需要在具体论证中说明其价值");
+}
+
 function unitClaim(arg, fallback = "这一判断", limit = 72) {
+  const claimBody = rewriteClaimBody(arg.thesis || arg.problem || "", limit);
+  if (claimBody && claimBody.length >= 8) return `“${claimBody}”这一判断`;
   const fallbackText = String(fallback || "").trim();
   const termLike = fallbackText
     .split("、")
     .map((item) => compactClause(item, 16))
     .filter((item) => item && isContentTerm(item))
     .slice(0, 4);
-  if (termLike.length >= 2) return `围绕${termLike.join("、")}展开的判断`;
+  if (termLike.length >= 2) return `${termLike.join("、")}之间的关系`;
   const claim = compactClause(arg.thesis || arg.problem || fallbackText, limit);
   return claim ? `关于${claim}的判断` : "这一判断";
+}
+
+function unitDetailTerms(unitText, existingTerms = [], limit = 5) {
+  const explicit = Array.from(unitText.matchAll(/(?:三籁|乾坤|现代化|近代科学|出世性|清末民初|八识|真如本体|俱分进化论|阿赖耶识|齐物论|社会达尔文主义|不住生死|不住涅槃)/g)).map((match) => match[0]);
+  const quoted = Array.from(unitText.matchAll(/[《“"]([^》”"]{2,20})[》”"]/g)).map((match) => match[1]);
+  return uniqueItems([...explicit, ...quoted, ...mineIdeaTerms(unitText)])
+    .filter((term) => term && isContentTerm(term) && !existingTerms.includes(term))
+    .filter((term) => !/^(思想|关系|问题|价值|主体|传统|现代|佛教|学术)$/.test(term))
+    .slice(0, limit);
+}
+
+function unitDetailClause(unitText, existingTerms = []) {
+  const details = unitDetailTerms(unitText, existingTerms);
+  return details.length ? `其中${details.join("、")}等线索不能被压缩为背景说明，` : "";
 }
 
 function unitSourceClause(profile, unitText, fallbackCitations = [], limit = 2) {
@@ -2086,21 +2115,20 @@ function zhangOpeningBridge({ localClaim, localA, localB, localC, unit }) {
   ], `${unit}:${localClaim}`);
 }
 
-function zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit }) {
+function zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit, detailClause = "" }) {
   return chooseVariant([
-    `如果说${rejected}只是这一问题的表层理解，那么${affirmed}才更能显示它的理论重心。${localA}在这里并非一个可以被单独抽出的名词，而是在${localB}、${localC}与${localD}之间发生重新联结的枢纽；${localClaim}也正是在这一联结中获得了可以展开的意义。`,
-    `这里需要区分的，是${localA}作为既有概念时的含义，与它进入${localB}、${localC}之后所承担的解释功能。换言之，${affirmed}并不是外在附会，而是把${localClaim}转化为可论证关系的关键一步。`,
-    `从这一点看，${localA}并未停留在${localB}内部的义理位置上。它一旦进入${localC}与${localD}之间，${localClaim}便不再只是单向度的判断，而成为重新安排思想关系的中介。`,
+    `如果说${rejected}只是这一问题的表层理解，那么${affirmed}才更能显示它的理论重心。${detailClause}${localA}在这里并非一个可以被单独抽出的名词，而是在${localB}、${localC}与${localD}之间发生重新联结的枢纽；${localClaim}也正是在这一联结中获得了可以展开的意义。`,
+    `这里需要区分的，是${localA}作为既有概念时的含义，与它进入${localB}、${localC}之后所承担的解释功能。换言之，${detailClause}${affirmed}并不是外在附会，而是把${localClaim}转化为可论证关系的关键一步。`,
+    `从这一点看，${localA}并未停留在${localB}内部的义理位置上。它一旦进入${localC}与${localD}之间，${detailClause}${localClaim}便不再只是单向度的判断，而成为重新安排思想关系的中介。`,
     `问题的推进并不在于反复确认${localA}的重要性，而在于说明${localA}何以通过${localB}、${localC}和${localD}之间的牵连，改变${localClaim}的解释位置。`,
   ], `${unit}:${localA}:${localB}`);
 }
 
-function zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit }) {
-  const source = unitSource || sourceClause;
+function zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit, detailClause = "" }) {
   return chooseVariant([
-    `${source}${localClaim}由此把问题从单纯的概念辨析推进到${uniqueItems([subject, localA, localB, localC, localD]).join("、")}之间的关系重组。正是在此意义上，这一论述不宜被写成外在的价值判断，而应当被处理为一个有边界的解释。`,
-    `${source}在${uniqueItems([localA, localB, localC, localD]).join("、")}之间形成的这一组关系，使结论只能以有限判断的方式出现：它打开了后续论证的方向，但仍需要回到具体文本，标明历史位置、概念边界和可成立的范围。`,
-    `${source}这样一来，${localA}所牵动的就不只是${localClaim}本身，而是${uniqueItems([localB, localC, localD]).join("、")}之间如何相互支撑的问题。暂时只能说，这一解释具有方向性，却仍需进一步核验其文本依据。`,
+    `${detailClause}${localClaim}由此把问题从单纯的概念辨析推进到${uniqueItems([subject, localA, localB, localC, localD]).join("、")}之间的关系重组。正是在此意义上，这一论述不宜被写成外在的价值判断，而应当被处理为一个有边界的解释。`,
+    `${detailClause}在${uniqueItems([localA, localB, localC, localD]).join("、")}之间形成的这一组关系，使结论只能以有限判断的方式出现：它打开了后续论证的方向，但仍需要回到具体文本，标明历史位置、概念边界和可成立的范围。`,
+    `${detailClause}这样一来，${localA}所牵动的就不只是${localClaim}本身，而是${uniqueItems([localB, localC, localD]).join("、")}之间如何相互支撑的问题。暂时只能说，这一解释具有方向性，却仍需进一步核验其文本依据。`,
   ], `${unit}:${localClaim}`);
 }
 
@@ -2112,20 +2140,19 @@ function profileOpeningBridge({ localClaim, localA, localB, localC, unit }) {
   ], `${unit}:${localClaim}`);
 }
 
-function profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit }) {
+function profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit, detailClause = "" }) {
   return chooseVariant([
-    `按照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${localRejected}这一层。更关键的是，${localAffirmed}，这使${localA}成为连接${localB}、${localC}与${localD}的论证枢纽。`,
-    `${reformMarker}，${localClaim}的关键并不在于增加一个概念标签，而在于让${localA}、${localB}和${localC}之间的关系获得新的排列。${causalMarker}，这一路径可以避免把全文压缩成单句判断。`,
-    `若从${middleMove}进入，${localRejected}只是需要被重新处理的出发点；真正推动论证的，是${localAffirmed}如何把${localA}与${localD}连接起来。`,
+    `按照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${localRejected}这一层。更关键的是，${detailClause}${localAffirmed}，这使${localA}成为连接${localB}、${localC}与${localD}的论证枢纽。`,
+    `${reformMarker}，${localClaim}的关键并不在于增加一个概念标签，而在于让${localA}、${localB}和${localC}之间的关系获得新的排列。${detailClause}${causalMarker}，这一路径可以避免把全文压缩成单句判断。`,
+    `若从${middleMove}进入，${localRejected}只是需要被重新处理的出发点；真正推动论证的，是${detailClause}${localAffirmed}如何把${localA}与${localD}连接起来。`,
   ], `${unit}:${localA}:${localB}`);
 }
 
-function profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit }) {
-  const source = unitSource || sourceClause;
+function profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit, detailClause = "" }) {
   return chooseVariant([
-    `${source}从“${closingMove}”的收束方式看，${hedgeMarker}，${localClaim}把前面的概念线索推向${uniqueItems([localA, localB, localC, localD]).join("、")}之间的关系。后续若要进入正式论文，还需要逐条回到原文和页码中核验。`,
-    `${source}${hedgeMarker}，这一判断目前能够成立的只是一个有边界的解释：它把${uniqueItems([localA, localB, localC]).join("、")}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。`,
-    `${source}若以${closingMove}作收束，${localClaim}并不适合被写成终局结论，而应当保留为仍需材料支撑的解释方向。`,
+    `从“${closingMove}”的收束方式看，${hedgeMarker}，${detailClause}${localClaim}把前面的概念线索推向${uniqueItems([localA, localB, localC, localD]).join("、")}之间的关系。后续若要进入正式论文，还需要逐条回到原文和页码中核验。`,
+    `${hedgeMarker}，${detailClause}这一判断目前能够成立的只是一个有边界的解释：它把${uniqueItems([localA, localB, localC]).join("、")}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。`,
+    `若以${closingMove}作收束，${detailClause}${localClaim}并不适合被写成终局结论，而应当保留为仍需材料支撑的解释方向。`,
   ], `${unit}:${localClaim}`);
 }
 
@@ -2150,15 +2177,16 @@ function buildZhangDraft(context) {
     const rejected = localContrast.rejected || `把${localA}还原为单一来源`;
     const affirmed = localContrast.affirmed || `${localA}在${localB}、${localC}之间的重新组织`;
     const unitSource = unitSourceClause(profile, unit, citations);
+    const detailClause = unitDetailClause(unit, [localA, localB, localC, localD]);
     if (index === 0) {
       const lead = zhangOpening({ mode, topic, termA, termB, termC, termD, termE, subject, localA, localB, localC, unit });
       const bridge = zhangOpeningBridge({ localClaim, localA, localB, localC, unit });
       return `${voicePrefix && !lead.startsWith("在我看来") ? voicePrefix : ""}${lead}${bridge}`;
     }
     if (index === units.length - 1) {
-      return zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit });
+      return zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit, detailClause });
     }
-    return zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit });
+    return zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit, detailClause });
   });
   return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
@@ -2192,6 +2220,7 @@ function buildProfileDraft(profile, context) {
     const localRejected = localContrast.rejected || rejected;
     const localAffirmed = localContrast.affirmed || `从${localC}中重新说明${localA}与${localB}的关系`;
     const unitSource = unitSourceClause(profile, unit, citations);
+    const detailClause = unitDetailClause(unit, [localA, localB, localC, localD]);
     if (index === 0) {
       const lead =
         openingMove.includes("历史")
@@ -2202,9 +2231,9 @@ function buildProfileDraft(profile, context) {
       return `${mode === "lecture" ? `在我看来，${lead}` : lead}${profileOpeningBridge({ localClaim, localA, localB, localC, unit })}`;
     }
     if (index === units.length - 1) {
-      return profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit });
+      return profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit, detailClause });
     }
-    return profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit });
+    return profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit, detailClause });
   });
   return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
@@ -2235,46 +2264,30 @@ function localDraft(profile, idea, mode, longformMode = "1200") {
   if (!cleanIdea) return "请先输入你的观点。";
   const result = buildCodexStyleDraft(profile, cleanIdea, mode, longformMode);
   const audit = styleAudit(profile, result.draft);
-  const pack = result.ideaPack || buildIdeaEvidencePack(cleanIdea);
+  const units = result.units || [];
   const sourceNotes = result.citations.length
-    ? result.citations.map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n")
+    ? result.citations.slice(0, 5).map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n")
     : "- 暂无候选出处；请先在“建模”页导入目标学者或主题文献。";
-  return `## 论点抽取
-
-- 问题域: ${result.argument.problem}
-- 核心判断: ${result.argument.thesis}
-- 证据线索: ${result.argument.evidence.length ? result.argument.evidence.join("；") : "原文暂未给出明确证据。"}
-
-${formatStyleLogicMarkdown(result.styleLogic || profileStyleLogic(profile))}
-
-${formatSourceLogicMarkdown(result.sourceLogic)}
-
-${formatIdeaPackMarkdown(pack)}
-
-## 全文覆盖检查
-${(result.units || []).map((unit, index) => `- [C${index + 1}] ${clipText(extractArgument(unit).thesis, 120)}`).join("\n") || "- 未形成分块；请检查原文是否为空。"}
-
-## 风格化改写稿
+  const citationOverflow = result.citations.length > 5 ? `\n- 另有 ${result.citations.length - 5} 条候选出处，正式定稿前请在“文献”页逐条核验。` : "";
+  return `## 风格化改写稿
 
 ${result.draft}
 
 ## Codex 风格自检
 - 风格贴近度: ${audit.score}/100
+- 内容覆盖: 已按全文分为 ${units.length || 1} 个材料块，生成时逐块改写，不只处理第一句。
 - 平均句长: ${audit.stats.mean}
 - 命中转折: ${audit.contrastHits.join("、") || "无"}
 - 命中重述: ${audit.reformulationHits.join("、") || "无"}
 - 命中概念词: ${audit.lexiconHits.slice(0, 10).join("、") || "无"}
 - 反 ChatGPT 腔: ${audit.generic.hits.length ? `需删除 ${audit.generic.hits.join("、")}` : "未命中常见平滑套话"}
 
-## 下一轮修改建议
-${audit.suggestions.map((item) => `- ${item}`).join("\n")}
-
-## 出处建议
-${sourceNotes}
+## 出处核验
+${sourceNotes}${citationOverflow}
 
 ## 需要你确认的地方
 - 这段改写没有冒充作者，也没有复制来源原文。
-- 本地重构只使用“原始观点吸收包”和当前 profile 的风格规则；凡未在原文或引用索引中出现的事实，都应视为仍需核验。
+- 本地重构只使用你的原始观点和当前 profile 的风格规则；凡未在原文或引用索引中出现的事实，都应视为仍需核验。
 - 如果要进入正式论文写作，需要补充具体文献、页码和原文证据。`;
 }
 
@@ -2312,16 +2325,20 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 3. 保留我的核心观点、证据和不确定性。
 4. 如需标注出处，只能使用“可引用材料”中的编号，不要虚构页码、篇名或观点。
 5. 不要输出普通 ChatGPT 式平滑总结，尤其避免“首先/其次/最后”“综上所述”“值得我们思考”“影响深远”“具有重要意义”等套话。
-6. 输出后必须做风格自检，并列出需要核验的事实。
+6. 输出后只做简短核验，并列出需要核验的事实；不要展开内部分析过程。
 7. 必须优先使用当前 profile 的独有概念词、连接词、段落动作和句长节奏；不要把不同作者都写成“要理解……不能只……”这一套模板。
 8. 如果当前 profile 不是张志强，不得自动套入张志强的“现代学术/思想史/义理”框架，除非我的原文或 profile 明确出现这些词。
 9. 原始观点无字数上限；必须先完整吸收，再分块改写。不得因为原文很长而只处理开头或结尾。
 10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“原始观点吸收包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
 11. 必须先做底层理解，再写正文：先抽取当前 profile 的四层风格逻辑，再理解我的原文每一块在论证中的作用，最后才进行风格迁移。不要只改写第一句，不要跳过后半段。
 12. 开头必须多样化：可以用历史定位、材料引入、概念位置移动、问题拆解、文献脉络进入等方式，不得默认用“要理解X，不能只……”作为固定起手。
+13. “论点抽取 / 作者底层风格模型 / 原文论证理解 / 原始观点吸收包 / 全文覆盖检查”只允许作为内部分析步骤，禁止在最终回答中作为标题或正文输出。
+14. 改写不是重新写一篇新文章：不得新增原文没有的事实关系、价值判断或文献判断；风格迁移只能改变论证组织和措辞节奏。
 
 目标体裁：${mode}
 生成规模：${longformMode}
+
+内部参考材料：下面三组信息只用于你在心里完成理解与调度，最终回答不得出现这些标题，不得把分析过程暴露给用户。
 
 ${formatStyleLogicMarkdown(styleLogic)}
 
@@ -2338,42 +2355,21 @@ ${citations.length ? citations.map((entry) => `- ${formatCitationRef(entry)} ${e
 我的观点：
 ${idea.trim()}
 
-必须按以下流程输出：
-
-## 论点抽取
-- 问题域:
-- 核心判断:
-- 已有证据:
-- 仍缺证据:
-
-## 作者底层风格模型
-- 词汇层:
-- 句子层:
-- 段落层:
-- 论证层:
-
-## 原文论证理解
-- 请逐块说明 [C1] [C2] [C3]... 各自承担的问题、证据、转折或收束作用。
+最终只允许按以下格式输出，不要输出内部分析标题：
 
 ## 风格化改写稿
 要求：
 - 开头先建立历史/思想/概念问题域，不要直接宣布结论。
 - 开头句式必须根据原文和 profile 变化，不要机械使用“要理解……不能只……”。
-- 至少使用一次“并非/不是……而是……”或“不能只……还要……”的概念区分。
-- 至少使用一次“也就是说/换言之/正是在此意义上”的重述推进。
+- 必须覆盖原始观点全文的主要判断、证据、转折和结尾，不得只改第一句。
+- 风格化表达必须服务于原文内容；凡原文没有的事实，不要补写成确定判断。
+- 至少使用一次当前 profile 支持的概念区分或重述推进，但不要为了凑规则而硬塞固定句式。
 - 结尾给出有限判断，不要做空泛总结。
-- 如果没有材料支持，必须标注“仍需进一步核验”。
 
-## 风格自检
-- 词汇:
-- 句式:
-- 段落:
-- 论证:
-- 反 ChatGPT 腔检查:
-- 证据边界检查: 逐条说明核心判断分别来自 [P]/[E]/[S] 哪个编号；没有编号支撑的，必须列入“仍需进一步核验”。
-
-## 需要核验的地方
-- `;
+## 简短核验
+- 内容覆盖: 用一句话说明是否覆盖全文。
+- 证据边界检查: 只列出需要补文献或页码核验的点；不要展示你的内部推理过程。
+- 反模板检查: 用一句话说明是否避免固定起手和普通 AI 套话。`;
 }
 
 function blendAiPrompt(profileA, profileB, weightA, idea, mode, longformMode = "1200") {
@@ -2392,13 +2388,9 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
   return `${aiPrompt(profile, idea, mode, longformMode)}
 
 请输出：
-1. 标题
-2. 论点抽取
-3. 风格化正文
-4. 风格自检
-5. 出处标注说明
-6. 材料使用表
-7. 需要核验的地方
+1. 标题（如不需要标题可以省略）
+2. 风格化正文
+3. 简短核验
 
 正文要求：
 - 用中文学术文体写作。
@@ -2407,7 +2399,8 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
 - 不要使用普通 AI 润色腔，如“首先/其次/最后”“综上所述”“影响深远”“值得我们思考”。
 - 对没有出处支撑的判断，用“仍需进一步核验”标出。
 - 如果原始观点很长，先按材料块重组论证，不要遗漏后半部分。
-- 材料使用表必须列出：改写后的关键判断 -> 原始观点编号 [P/E/U] 或文献编号 [S] -> 是否需要进一步核验。`;
+- 不要输出论点抽取、作者底层风格模型、原文论证理解、原始观点吸收包、全文覆盖检查、材料使用表等后台分析内容。
+- 简短核验只保留：内容是否覆盖全文、哪些事实需要补出处、是否避免固定模板。`;
 }
 
 function buildBlendLongformPrompt(profileA, profileB, weightA, idea, mode, longformMode) {
