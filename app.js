@@ -1850,13 +1850,16 @@ function styleAudit(profile, text) {
   const isZhang = isZhangProfile(profile);
   const contrastHits = markerHits(profile, "contrast", text, isZhang ? zhangStyleHints.relation : markerSets.contrast.slice(0, 6));
   const causalHits = markerHits(profile, "causal", text, markerSets.causal.slice(0, 5));
-  const reformulationHits = markerHits(profile, "reformulation", text, isZhang ? zhangStyleHints.relation : ["也就是说", "换言之", "在此意义上", "严格说来"]);
+  const reformulationHits = markerHits(profile, "reformulation", text, isZhang
+    ? [...zhangStyleHints.relation, "在这个意义上", "从这一点看", "由此看", "这样一来", "换言之"]
+    : ["也就是说", "换言之", "在此意义上", "在这个意义上", "从这一点看", "严格说来"]);
   const lexiconPool = profileStyleLexicon(profile).filter((item) => item && isContentTerm(item));
   const lexiconHits = uniqueItems(lexiconPool.filter((item) => text.includes(item)));
   const frameHits = uniqueItems(pickFrameTerms(profile, text).filter((item) => text.includes(item)));
-  const hasProblemFrame = /问题域|问题性|如何理解|意味着|关乎|历史条件|文本脉络|材料线索|解释边界|在此意义上|理论重心/.test(text);
+  const hasProblemFrame = /问题域|问题性|如何理解|意味着|关乎|历史条件|文本脉络|材料线索|解释边界|在此意义上|在这个意义上|从这一点看|解释位置|解释范围|概念支点|关系重组|重新打开|重新安置|理论重心/.test(text);
   const hasBoundedClaim = /在某种意义上|可能|或许|似乎|并不能简单地|大致可以说|暂时只能|仍需|还需要|可以说/.test(text);
   const hasProfileStructure = profileMoveItems(profile).some((item) => text.includes(item)) || /开端|中段|结尾|段落|论证|铺陈|推进/.test(text);
+  const deepLogicHits = uniqueItems((text.match(/解释位置|解释范围|概念支点|关系重组|重新打开|重新安置|重新安排|理论重心|义理位置|中介|互相支撑|问题域|概念辨析|关系先行铺开/g) || []));
   const generic = antiGenericAudit(text);
   let score = 0;
   score += Math.min(18, contrastHits.length * 5);
@@ -1867,6 +1870,7 @@ function styleAudit(profile, text) {
   score += hasProblemFrame ? 8 : 0;
   score += hasBoundedClaim ? 8 : 0;
   score += hasProfileStructure ? 8 : 0;
+  score += Math.min(18, deepLogicHits.length * 5);
   score += scoreSentenceRhythm(profile, stats);
   score = Math.max(0, Math.min(100, Math.round(score - generic.penalty)));
   return {
@@ -1880,8 +1884,9 @@ function styleAudit(profile, text) {
     hasProblemFrame,
     hasBoundedClaim,
     hasProfileStructure,
+    deepLogicHits,
     generic,
-    suggestions: buildAuditSuggestions({ contrastHits, causalHits, reformulationHits, lexiconHits, frameHits, hasProblemFrame, hasBoundedClaim, hasProfileStructure, stats, generic }),
+    suggestions: buildAuditSuggestions({ contrastHits, causalHits, reformulationHits, lexiconHits, frameHits, hasProblemFrame, hasBoundedClaim, hasProfileStructure, deepLogicHits, stats, generic }),
   };
 }
 
@@ -1891,6 +1896,7 @@ function buildAuditSuggestions(audit) {
   if (!audit.contrastHits.length) suggestions.push("补入当前 profile 常用的转折或辨析连接词。");
   if (!audit.reformulationHits.length) suggestions.push("加入重述推进，把概念关系再转一层。");
   if (audit.lexiconHits.length < 5) suggestions.push("增加当前 profile 的独有概念词，避免两个作者写成同一种口吻。");
+  if ((audit.deepLogicHits || []).length < 2) suggestions.push("增加概念编排动作，例如解释位置、关系重组或中介功能，而不是套固定句式。");
   if (!audit.hasProfileStructure) suggestions.push("把当前 profile 的段落动作写进文本，比如历史定位、文献引入、概念展开或关系澄清。");
   if (!audit.hasBoundedClaim) suggestions.push("结尾用有限判断收束，保留可核验范围。");
   if (audit.generic.hits.length) suggestions.push(`删除通用 AI 腔：${audit.generic.hits.join("、")}。`);
@@ -2041,6 +2047,88 @@ function citationSourceClause(citations, refs) {
     : "在尚未补入更具体文献之前，这一判断只能作为问题意识的初步展开；";
 }
 
+function hashText(text) {
+  return Array.from(String(text || "")).reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 7);
+}
+
+function chooseVariant(items, seed) {
+  return items[Math.abs(hashText(seed)) % items.length];
+}
+
+function zhangOpening({ mode, topic, termA, termB, termC, termD, termE, subject, localA, localB, localC, unit }) {
+  const baseSeed = `${mode}:${topic}:${unit.slice(0, 80)}`;
+  const articleOpenings = [
+    `若把${topic}放回${termC}与${termD}交错的脉络中，首先显出的并不是一个可以立即裁断的结论，而是${termA}何以被重新安置的问题。`,
+    `从${localA}与${localB}的关系入手，重点并不是单纯追认某一概念的既定含义，而是在${termC}中重新打开${topic}。`,
+    `所谓${topic}，在这里首先表现为一种解释位置的移动：${termA}不再只是某个孤立的义理事项，而被放入${termB}、${termC}与${termE}之间加以衡量。`,
+    `若把这一论述的层次拆开来看，其起点并非给${subject}贴上一个现成标签，而是通过${localA}、${localB}与${localC}之间的牵连，重建可以讨论${topic}的范围。`,
+    `真正需要处理的，并不是${localA}这个词本身，而是它在${localB}、${localC}以及${termC}之间如何承担解释功能。`,
+  ];
+  const introOpenings = [
+    `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`,
+    `导论若从${topic}进入，较稳妥的方式不是先给出结论，而是先说明${localA}、${localB}与${termC}之间为什么会构成一个需要辨析的问题。`,
+    `本文的问题意识，可以从${localA}在${termC}中的位置变化说起：它所牵动的并非单一概念解释，而是${termB}、${termD}与${termE}之间的重新配置。`,
+  ];
+  const lectureOpenings = [
+    `在我看来，${topic}之所以值得展开，并不在于它已经有了一个清楚的结论，而在于${localA}与${localB}之间还存在需要重新说明的环节。`,
+    `如果换成讲授的方式说，${topic}的关键并不是先判定${subject}如何，而是看${termA}怎样在${termC}和${termD}之间被重新组织。`,
+  ];
+  if (mode === "intro") return chooseVariant(introOpenings, baseSeed);
+  if (mode === "lecture") return chooseVariant(lectureOpenings, baseSeed);
+  return chooseVariant(articleOpenings, baseSeed);
+}
+
+function zhangOpeningBridge({ localClaim, localA, localB, localC, unit }) {
+  return chooseVariant([
+    `${localClaim}因而不是孤立判断，而是把${uniqueItems([localA, localB, localC]).join("、")}放入同一问题域中加以说明。`,
+    `在这个意义上，${localClaim}所承担的功能，不是补充一个材料细节，而是把${uniqueItems([localA, localB, localC]).join("、")}之间的关系先行铺开。`,
+    `由此看，${localClaim}并不只是一个判断句，而是后续论证得以展开的概念支点。`,
+  ], `${unit}:${localClaim}`);
+}
+
+function zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit }) {
+  return chooseVariant([
+    `如果说${rejected}只是这一问题的表层理解，那么${affirmed}才更能显示它的理论重心。${localA}在这里并非一个可以被单独抽出的名词，而是在${localB}、${localC}与${localD}之间发生重新联结的枢纽；${localClaim}也正是在这一联结中获得了可以展开的意义。`,
+    `这里需要区分的，是${localA}作为既有概念时的含义，与它进入${localB}、${localC}之后所承担的解释功能。换言之，${affirmed}并不是外在附会，而是把${localClaim}转化为可论证关系的关键一步。`,
+    `从这一点看，${localA}并未停留在${localB}内部的义理位置上。它一旦进入${localC}与${localD}之间，${localClaim}便不再只是单向度的判断，而成为重新安排思想关系的中介。`,
+    `问题的推进并不在于反复确认${localA}的重要性，而在于说明${localA}何以通过${localB}、${localC}和${localD}之间的牵连，改变${localClaim}的解释位置。`,
+  ], `${unit}:${localA}:${localB}`);
+}
+
+function zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit }) {
+  const source = unitSource || sourceClause;
+  return chooseVariant([
+    `${source}${localClaim}由此把问题从单纯的概念辨析推进到${uniqueItems([subject, localA, localB, localC, localD]).join("、")}之间的关系重组。正是在此意义上，这一论述不宜被写成外在的价值判断，而应当被处理为一个有边界的解释。`,
+    `${source}在${uniqueItems([localA, localB, localC, localD]).join("、")}之间形成的这一组关系，使结论只能以有限判断的方式出现：它打开了后续论证的方向，但仍需要回到具体文本，标明历史位置、概念边界和可成立的范围。`,
+    `${source}这样一来，${localA}所牵动的就不只是${localClaim}本身，而是${uniqueItems([localB, localC, localD]).join("、")}之间如何相互支撑的问题。暂时只能说，这一解释具有方向性，却仍需进一步核验其文本依据。`,
+  ], `${unit}:${localClaim}`);
+}
+
+function profileOpeningBridge({ localClaim, localA, localB, localC, unit }) {
+  return chooseVariant([
+    `${localClaim}应当被理解为${localA}、${localB}与${localC}之间关系的开启，而不是一个已经自足的结论。`,
+    `由此形成的，并不是一个单点判断，而是围绕${uniqueItems([localA, localB, localC]).join("、")}展开的解释范围。`,
+    `这一判断的意义，正在于它把${localA}与${localB}之间的关系推进到${localC}的层面。`,
+  ], `${unit}:${localClaim}`);
+}
+
+function profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit }) {
+  return chooseVariant([
+    `按照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${localRejected}这一层。更关键的是，${localAffirmed}，这使${localA}成为连接${localB}、${localC}与${localD}的论证枢纽。`,
+    `${reformMarker}，${localClaim}的关键并不在于增加一个概念标签，而在于让${localA}、${localB}和${localC}之间的关系获得新的排列。${causalMarker}，这一路径可以避免把全文压缩成单句判断。`,
+    `若从${middleMove}进入，${localRejected}只是需要被重新处理的出发点；真正推动论证的，是${localAffirmed}如何把${localA}与${localD}连接起来。`,
+  ], `${unit}:${localA}:${localB}`);
+}
+
+function profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit }) {
+  const source = unitSource || sourceClause;
+  return chooseVariant([
+    `${source}从“${closingMove}”的收束方式看，${hedgeMarker}，${localClaim}把前面的概念线索推向${uniqueItems([localA, localB, localC, localD]).join("、")}之间的关系。后续若要进入正式论文，还需要逐条回到原文和页码中核验。`,
+    `${source}${hedgeMarker}，这一判断目前能够成立的只是一个有边界的解释：它把${uniqueItems([localA, localB, localC]).join("、")}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。`,
+    `${source}若以${closingMove}作收束，${localClaim}并不适合被写成终局结论，而应当保留为仍需材料支撑的解释方向。`,
+  ], `${unit}:${localClaim}`);
+}
+
 function buildZhangDraft(context) {
   const { units, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode, profile } = context;
   const termA = focusTerms[0] || terms[0] || "问题意识";
@@ -2063,15 +2151,14 @@ function buildZhangDraft(context) {
     const affirmed = localContrast.affirmed || `${localA}在${localB}、${localC}之间的重新组织`;
     const unitSource = unitSourceClause(profile, unit, citations);
     if (index === 0) {
-      const lead = mode === "intro"
-        ? `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
-        : `${voicePrefix}要理解${topic}，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉${termA}如何在${termC}、${termD}与${termE}之间获得重新配置。`;
-      return `${lead}就原文第一层意思说，${localClaim}并不是一个孤立判断，而是把${uniqueItems([localA, localB, localC]).join("、")}放入同一问题域中加以说明。`;
+      const lead = zhangOpening({ mode, topic, termA, termB, termC, termD, termE, subject, localA, localB, localC, unit });
+      const bridge = zhangOpeningBridge({ localClaim, localA, localB, localC, unit });
+      return `${voicePrefix && !lead.startsWith("在我看来") ? voicePrefix : ""}${lead}${bridge}`;
     }
     if (index === units.length - 1) {
-      return `${unitSource || sourceClause}最后还需要看到，原文后段关于${localClaim}的展开，使问题不能停留在前面的概念辨析上。正是在此意义上，这一论述的重心不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把${uniqueItems([subject, localA, localB, localC, localD]).join("、")}重新组织为一个有边界的解释。暂时只能说，这一解释为后续论证开出了方向，但仍需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
+      return zhangClosingMove({ unitSource, sourceClause, subject, localA, localB, localC, localD, localClaim, unit });
     }
-    return `进一步说，如果通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出这一段的理论重心。也就是说，${localA}在这里并非一个可以被单独抽出的名词，而是在${localB}、${localC}与${localD}之间发生重新联结的枢纽；原文关于${localClaim}的说法，正是把这一联结推到更具体的层面。`;
+    return zhangMiddleMove({ rejected, affirmed, localA, localB, localC, localD, localClaim, unit });
   });
   return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
@@ -2112,12 +2199,12 @@ function buildProfileDraft(profile, context) {
           : openingMove.includes("文献")
             ? `从材料线索进入${topic}，先要把${subject}、${termA}与${termB}之间的文本关系交代清楚，而不是先给出一个抽象判断。`
             : `所谓${topic}，并不是一个可以直接套用定义的对象；它更像是围绕${anchorTerms || termA}展开的问题域。`;
-      return `${mode === "lecture" ? `在我看来，${lead}` : lead}原文首先提出的${localClaim}，应当被理解为${localA}、${localB}与${localC}之间关系的开启，而不是一个已经自足的结论；也就是说，这里真正形成的是一个需要继续展开的问题域。`;
+      return `${mode === "lecture" ? `在我看来，${lead}` : lead}${profileOpeningBridge({ localClaim, localA, localB, localC, unit })}`;
     }
     if (index === units.length - 1) {
-      return `${unitSource || sourceClause}从“${closingMove}”的收束方式看，${hedgeMarker}，原文最后关于${localClaim}的说法，把前文的概念线索进一步推向${uniqueItems([localA, localB, localC, localD]).join("、")}之间的关系。可以说，这段改写目前只能构成一个有边界的解释；后续若要进入正式论文，还需要把这些关键判断逐条回到原文和页码中核验。`;
+      return profileClosingMove({ unitSource, sourceClause, closingMove, hedgeMarker, localA, localB, localC, localD, localClaim, unit });
     }
-    return `若依照“${openingMove}—${middleMove}”的推进方式，这一层需要先承认一般说法的有效范围，${contrastMarker}不能停留在${localRejected}这一层。更关键的是，${localAffirmed}，这使${localA}不再只是一个名词，而成为连接${localB}、${localC}与${localD}的论证枢纽。${reformMarker}，原文关于${localClaim}的材料，正是在这一枢纽上继续展开；${causalMarker}才能避免把全文化约为开头一句的简单改写。`;
+    return profileMiddleMove({ openingMove, middleMove, contrastMarker, causalMarker, reformMarker, localRejected, localAffirmed, localA, localB, localC, localD, localClaim, unit });
   });
   return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
@@ -2231,6 +2318,7 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 9. 原始观点无字数上限；必须先完整吸收，再分块改写。不得因为原文很长而只处理开头或结尾。
 10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“原始观点吸收包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
 11. 必须先做底层理解，再写正文：先抽取当前 profile 的四层风格逻辑，再理解我的原文每一块在论证中的作用，最后才进行风格迁移。不要只改写第一句，不要跳过后半段。
+12. 开头必须多样化：可以用历史定位、材料引入、概念位置移动、问题拆解、文献脉络进入等方式，不得默认用“要理解X，不能只……”作为固定起手。
 
 目标体裁：${mode}
 生成规模：${longformMode}
@@ -2270,6 +2358,7 @@ ${idea.trim()}
 ## 风格化改写稿
 要求：
 - 开头先建立历史/思想/概念问题域，不要直接宣布结论。
+- 开头句式必须根据原文和 profile 变化，不要机械使用“要理解……不能只……”。
 - 至少使用一次“并非/不是……而是……”或“不能只……还要……”的概念区分。
 - 至少使用一次“也就是说/换言之/正是在此意义上”的重述推进。
 - 结尾给出有限判断，不要做空泛总结。
