@@ -1634,6 +1634,136 @@ function buildAuditSuggestions(audit) {
   return suggestions.length ? suggestions : ["规则命中度较高；下一步主要补充具体文献、页码和原文证据。"];
 }
 
+function diagnosticRhythmScore(profile, stats) {
+  const target = profile.stats?.avgSentenceLength || 30;
+  const distance = Math.abs((stats.mean || 0) - target);
+  if (distance <= 3) return 34;
+  if (distance <= 8) return 30;
+  if (distance <= 14) return 24;
+  if (distance <= 22) return 16;
+  if (stats.mean >= 24) return 10;
+  return 4;
+}
+
+function diagnosticParagraphScore(profile, text) {
+  const paragraphs = splitParagraphs(text);
+  const target = profile.paragraphModel?.avgParagraphLength || 320;
+  if (!paragraphs.length) return { score: 4, avg: 0 };
+  const avg = paragraphs.reduce((sum, paragraph) => sum + tokenize(paragraph).length, 0) / paragraphs.length;
+  const ratio = target ? Math.abs(avg - target) / target : 1;
+  let score = 4;
+  if (ratio <= 0.25) score = 12;
+  else if (ratio <= 0.45) score = 9;
+  else if (avg >= 120) score = 7;
+  return { score, avg: Number(avg.toFixed(2)) };
+}
+
+function diagnosticPatternHits(text) {
+  const patterns = [
+    "如果说",
+    "那么",
+    "所以",
+    "也就是说",
+    "换言之",
+    "正是在此意义上",
+    "不是",
+    "而是",
+    "并非",
+    "一方面",
+    "另一方面",
+    "可以说",
+    "完全不一样",
+    "不能够",
+    "理解",
+    "关系",
+    "界限",
+    "原理",
+  ];
+  return patterns.filter((pattern) => text.includes(pattern));
+}
+
+function diagnosticDomainHits(profile, text) {
+  const domainTerms = [
+    ...conceptSeeds,
+    ...(profile.lexicon || []),
+    ...(profile.pairs || []).flatMap((pair) => String(pair).split("/")),
+    "原理",
+    "界限",
+    "世界",
+    "民族",
+    "民族主义",
+    "中心",
+    "价值观",
+    "共同体",
+    "平等",
+    "自我",
+    "一体",
+    "政治原理",
+  ];
+  return uniqueItems(domainTerms.filter((term) => term && text.includes(term))).slice(0, 18);
+}
+
+function diagnosticAudit(profile, text) {
+  const sentences = splitSentences(text);
+  const stats = sentenceStats(sentences);
+  const rhythmScore = diagnosticRhythmScore(profile, stats);
+  const paragraph = diagnosticParagraphScore(profile, text);
+  const broadMarkers = uniqueItems([
+    ...Object.values(markerSets).flat(),
+    ...(profile.markers?.reformulation || []),
+    ...zhangStyleHints.relation,
+    ...zhangStyleHints.bounded,
+  ]).filter((item) => text.includes(item));
+  const patternHits = diagnosticPatternHits(text);
+  const domainHits = diagnosticDomainHits(profile, text);
+  const citations = findCitationMatches(profile, text, 8);
+  const hasBoundedClaim = /在某种意义上|可能|或许|似乎|并不能简单地|大致可以说|暂时只能|可以说|不能够完全|不一样/.test(text);
+  const hasProblemFrame = /问题域|问题性|如何理解|意味着|关乎|历史条件|原理|界限|关系|形成|理解/.test(text);
+  const generic = antiGenericAudit(text);
+  let score = 0;
+  score += rhythmScore;
+  score += paragraph.score;
+  score += Math.min(18, broadMarkers.length * 4);
+  score += Math.min(16, patternHits.length * 3);
+  score += Math.min(16, domainHits.length * 2);
+  score += Math.min(10, citations.length * 3);
+  score += hasProblemFrame ? 7 : 0;
+  score += hasBoundedClaim ? 5 : 0;
+  const genericPenalty = generic.hits.length >= 3 && rhythmScore < 20 ? Math.min(8, generic.hits.length * 2) : 0;
+  if (sentences.length <= 1) score = Math.min(score, 72);
+  score = Math.max(0, Math.min(100, Math.round(score - genericPenalty)));
+  return {
+    score,
+    stats,
+    paragraph,
+    rhythmScore,
+    broadMarkers,
+    patternHits,
+    domainHits,
+    citations,
+    hasProblemFrame,
+    hasBoundedClaim,
+    generic,
+    genericPenalty,
+  };
+}
+
+function buildDiagnosticFindings(audit) {
+  const findings = [
+    `平均句长：${audit.stats.mean}；句长节奏得分 ${audit.rhythmScore}/34。`,
+    `平均段落长度：${audit.paragraph.avg || "未形成段落"}；段落密度得分 ${audit.paragraph.score}/12。`,
+    `命中的论证/连接标记：${audit.broadMarkers.slice(0, 12).join("、") || "无"}`,
+    `命中的结构动作：${audit.patternHits.slice(0, 12).join("、") || "无"}`,
+    `命中的领域概念：${audit.domainHits.slice(0, 12).join("、") || "无"}`,
+    audit.citations.length ? `命中引用索引候选：${audit.citations.slice(0, 4).map(formatCitationRef).join("、")}` : "未命中引用索引候选；如果这是原文，建议把该篇加入建模语料以增强来源识别。",
+    audit.hasProblemFrame ? "有问题域/原理/关系类的展开信号。" : "缺少明显的问题域或关系展开信号。",
+    audit.hasBoundedClaim ? "有边界意识或有限判断信号。" : "边界意识不明显；短截段可能会低估。",
+  ];
+  if (audit.generic.hits.length) findings.push(`出现通用词：${audit.generic.hits.join("、")}；诊断页只作弱扣分，不再把作者原文误判为 AI 套话。`);
+  if (audit.score >= 75) findings.push("整体与当前 profile 的句法节奏和学术动作较接近；如果这是作者原文，分数应作为高相似处理。");
+  return findings;
+}
+
 function buildCodexStyleDraft(profile, idea, mode) {
   const cleanIdea = idea.trim().replace(/\s+/g, " ");
   const argument = extractArgument(cleanIdea);
@@ -1955,19 +2085,8 @@ function extractResponseText(data) {
 }
 
 function diagnoseText(profile, text) {
-  const audit = styleAudit(profile, text);
-  const findings = [
-    `平均句长：${audit.stats.mean}。`,
-    `命中的转折标记：${audit.contrastHits.join("、") || "无"}`,
-    `命中的因果标记：${audit.causalHits.join("、") || "无"}`,
-    `命中的重述标记：${audit.reformulationHits.join("、") || "无"}`,
-    `命中的概念词：${audit.lexiconHits.slice(0, 12).join("、") || "无"}`,
-    audit.hasProblemFrame ? "有问题域/意义转换信号。" : "缺少明显的问题域或意义转换信号。",
-    audit.hasBoundedClaim ? "有有限判断或强度校准。" : "结尾判断偏平，需要加边界意识。",
-    audit.generic.hits.length ? `通用 AI 腔命中：${audit.generic.hits.join("、")}。` : "未命中常见通用 AI 套话。",
-    ...audit.suggestions,
-  ];
-  return { score: audit.score, findings };
+  const audit = diagnosticAudit(profile, text);
+  return { score: audit.score, findings: buildDiagnosticFindings(audit) };
 }
 
 function renderDiagnosis(result) {
