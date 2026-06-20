@@ -798,6 +798,75 @@ function mapToSortedItems(map) {
     .sort((a, b) => b.count - a.count);
 }
 
+function topMarkerItems(markers, key, limit = 6) {
+  return (markers?.[key] || [])
+    .map((entry) => entry.item || entry)
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function styleProgressionPattern(paragraphModel) {
+  const openings = (paragraphModel.openingMoves || []).map((entry) => entry.item).join("、");
+  const middles = (paragraphModel.middleMoves || []).map((entry) => entry.item).join("、");
+  const closings = (paragraphModel.closingMoves || []).map((entry) => entry.item).join("、");
+  if (/历史|思想/.test(openings) && /对比|重述/.test(middles)) return "历史定位后，通过概念区分和重述澄清推进论证。";
+  if (/文献/.test(openings)) return "先引入材料或文献，再逐步澄清概念关系。";
+  if (/问题/.test(openings)) return "先提出问题域，再用转折、因果和有限判断收束。";
+  if (/意义|有限|开放/.test(closings)) return "段落末端偏向意义收束或边界判断。";
+  return "以概念展开为起点，通过关系澄清组织段落。";
+}
+
+function inferStyleLogic({ name, stats, markers, paragraphModel, lexicon, pairs }) {
+  const contrast = topMarkerItems(markers, "contrast");
+  const causal = topMarkerItems(markers, "causal");
+  const reformulation = topMarkerItems(markers, "reformulation");
+  const hedge = topMarkerItems(markers, "hedge");
+  const opening = (paragraphModel.openingMoves || [])[0]?.item || "概念展开";
+  const middle = (paragraphModel.middleMoves || [])[0]?.item || "关系澄清";
+  const closing = (paragraphModel.closingMoves || [])[0]?.item || "有限判断";
+  const avgSentence = stats?.avgSentenceLength || 0;
+  return {
+    corePattern: `${name || "该作者"}通常不是直接给出结论，而是先建立${opening}，再通过${middle}把概念关系重新安排，最后以${closing}控制判断强度。`,
+    lexical: {
+      signatureConcepts: (lexicon || []).slice(0, 14),
+      conceptPairs: (pairs || []).slice(0, 8),
+      connectors: uniqueItems([...contrast, ...causal, ...reformulation]).slice(0, 14),
+      stanceMarkers: hedge,
+    },
+    sentence: {
+      rhythm: `平均句长约 ${avgSentence}，句子通常承担限定、转折、因果和重述的复合功能。`,
+      contrast,
+      causal,
+      reformulation,
+      claimPlacement: "主判断多在问题铺陈和概念区分之后出现，不宜一开头就平铺结论。",
+    },
+    paragraph: {
+      opening,
+      middle,
+      closing,
+      progression: styleProgressionPattern(paragraphModel || {}),
+    },
+    argument: {
+      problemFraming: `${opening}优先，先说明为什么这个问题值得被重新理解。`,
+      opponentConstruction: "常把通行理解、单一来源说或过于平面的判断作为需要被改写的对象。",
+      evidenceSequence: "先定问题域，再引入概念、文献或历史处境，最后给出有限解释。",
+      counterHandling: "通过“并非/不是……而是……”和“也就是说/换言之”吸收并重排反面理解。",
+      conclusionStyle: `${closing}，避免直接大而化之地下结论。`,
+    },
+  };
+}
+
+function profileStyleLogic(profile) {
+  return profile.styleLogic || inferStyleLogic({
+    name: profile.name,
+    stats: profile.stats || {},
+    markers: profile.markers || {},
+    paragraphModel: profile.paragraphModel || {},
+    lexicon: profile.lexicon || [],
+    pairs: profile.pairs || [],
+  });
+}
+
 function buildCitationIndex(sourceDocs, lexicon) {
   const terms = [...new Set([...(lexicon || []), ...conceptSeeds])];
   const index = [];
@@ -939,6 +1008,8 @@ function analyzeText(text, name, documents = 1, sourceDocs = []) {
   const lexicon = extractConceptTerms(analysisText, [n4, n3, n2]);
   const paragraphModel = analyzeParagraphStructure(paragraphs);
   const citationIndex = buildCitationIndex(sourceDocs, lexicon);
+  const pairs = inferPairs(lexicon);
+  const styleLogic = inferStyleLogic({ name, stats, markers, paragraphModel, lexicon, pairs });
 
   return {
     id: `${slugify(name)}-${Date.now()}`,
@@ -956,9 +1027,10 @@ function analyzeText(text, name, documents = 1, sourceDocs = []) {
     sources: sourceDocs.map((doc) => ({ id: doc.id, title: doc.title, type: doc.type, pages: doc.pages || null, chars: doc.text.length })),
     voiceStats: voice.stats,
     paragraphModel,
+    styleLogic,
     citationIndex,
     lexicon,
-    pairs: inferPairs(lexicon),
+    pairs,
     markers: {
       contrast: markers.contrast.map((entry) => entry.item),
       causal: markers.causal.map((entry) => entry.item),
@@ -1113,11 +1185,19 @@ function renderAnalysisPreview(profile) {
 }
 
 function profileToMarkdown(profile) {
+  const logic = profileStyleLogic(profile);
   return `# ${profile.name} 风格规则
 
 来源：${profile.source || "本地 profile"}
 语料规模：${profile.stats?.tokens || 0} tokens，${profile.stats?.sentences || 0} 句
 来源数量：${profile.sources?.length || profile.stats?.documents || 0}
+
+## 四层风格逻辑
+- 核心运行方式：${logic.corePattern}
+- 词汇层：${(logic.lexical.signatureConcepts || []).slice(0, 12).join("、") || "未记录"}
+- 句子层：${logic.sentence.rhythm}
+- 段落层：${logic.paragraph.progression}
+- 论证层：${logic.argument.problemFraming}${logic.argument.counterHandling}
 
 ## 作者/引文分离
 - 作者文本字符：${profile.voiceStats?.authorChars ?? "未统计"}
@@ -1395,6 +1475,122 @@ function buildIdeaEvidencePack(text) {
   };
 }
 
+function normalizeIdeaText(text) {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function rewriteUnitLimit(mode, longformMode = "1200") {
+  const scale = Number(longformMode || 1200);
+  if (scale >= 3500) return 7;
+  if (scale >= 2000) return 5;
+  if (mode === "intro") return 3;
+  return 4;
+}
+
+function buildRewriteUnits(text, maxUnits = 4) {
+  const paragraphs = splitParagraphs(text);
+  const sourceUnits = paragraphs.length >= 2 ? paragraphs : splitSentences(text);
+  const units = sourceUnits.length ? sourceUnits : [text];
+  if (units.length <= maxUnits) return units.map((unit) => unit.trim()).filter(Boolean);
+  const groupSize = Math.ceil(units.length / maxUnits);
+  const grouped = [];
+  for (let index = 0; index < units.length; index += groupSize) {
+    grouped.push(units.slice(index, index + groupSize).join(" "));
+  }
+  return grouped.map((unit) => unit.trim()).filter(Boolean);
+}
+
+function termsForRewriteUnit(profile, unitText, fallbackTerms = [], limit = 6) {
+  const profileHits = (profile.lexicon || []).filter((term) => unitText.includes(term));
+  return uniqueItems([...mineIdeaTerms(unitText), ...profileHits, ...fallbackTerms])
+    .filter((item) => item && isContentTerm(item))
+    .slice(0, limit);
+}
+
+function unitClaim(arg, fallback = "这一判断", limit = 72) {
+  const fallbackText = String(fallback || "").trim();
+  const termLike = fallbackText
+    .split("、")
+    .map((item) => compactClause(item, 16))
+    .filter((item) => item && isContentTerm(item))
+    .slice(0, 4);
+  if (termLike.length >= 2) return `围绕${termLike.join("、")}展开的判断`;
+  const claim = compactClause(arg.thesis || arg.problem || fallbackText, limit);
+  return claim ? `关于${claim}的判断` : "这一判断";
+}
+
+function unitSourceClause(profile, unitText, fallbackCitations = [], limit = 2) {
+  const unitCitations = findCitationMatches(profile, unitText, limit);
+  const selected = unitCitations.length ? unitCitations : fallbackCitations.slice(0, limit);
+  if (!selected.length) return "";
+  return `从已建档材料看，${uniqueCitationRefs(selected, limit).join("、")} 可以作为进一步核验的文本入口；`;
+}
+
+function allUnitCitations(profile, units, fallbackCitations = []) {
+  const seen = new Set();
+  return [...fallbackCitations, ...units.flatMap((unit) => findCitationMatches(profile, unit, 3))]
+    .filter((entry) => {
+      const key = `${entry.sourceId}:${entry.page || ""}:${entry.excerpt}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 10);
+}
+
+function classifySourceUnit(unitText, index, total) {
+  if (index === 0 && /(问题|如何|为什么|何以|要理解|不能只|并非|不是)/.test(unitText)) return "问题域/反面对象";
+  if (/(因为|由于|例如|材料|文献|表现|说明|显示|一方面|另一方面|通过|以.*为)/.test(unitText)) return "证据与材料展开";
+  if (/(但是|然而|并非|不是|而是|不只是|另一方面|反而|却)/.test(unitText)) return "转折与概念区分";
+  if (index === total - 1 || /(因此|所以|由此|这意味着|可见|实现了|形成了|价值|意义)/.test(unitText)) return "收束与意义判断";
+  return "关系推进";
+}
+
+function analyzeSourceLogic(profile, text, units) {
+  const argument = extractArgument(text);
+  const unitAnalyses = units.map((unit, index) => {
+    const unitArgument = extractArgument(unit);
+    const terms = termsForRewriteUnit(profile, unit, mineIdeaTerms(text), 7);
+    return {
+      id: `C${index + 1}`,
+      role: classifySourceUnit(unit, index, units.length),
+      terms,
+      claim: unitClaim(unitArgument, terms.join("、") || argument.topic),
+      evidence: unitArgument.evidence.map((item) => clipText(item, 110)).slice(0, 2),
+    };
+  });
+  return {
+    problem: argument.problem,
+    thesis: argument.thesis,
+    terms: mineIdeaTerms(text),
+    units: unitAnalyses,
+  };
+}
+
+function formatStyleLogicMarkdown(logic) {
+  return `## 作者底层风格模型
+
+- 核心运行方式: ${logic.corePattern}
+- 词汇层: ${(logic.lexical.signatureConcepts || []).slice(0, 10).join("、") || "未形成稳定概念词"}。
+- 句子层: ${logic.sentence.rhythm} 常用转折：${(logic.sentence.contrast || []).join("、") || "未检出"}；常用重述：${(logic.sentence.reformulation || []).join("、") || "未检出"}。
+- 段落层: 开头多为“${logic.paragraph.opening}”，中段多为“${logic.paragraph.middle}”，收束多为“${logic.paragraph.closing}”。${logic.paragraph.progression}
+- 论证层: ${logic.argument.problemFraming}${logic.argument.counterHandling}`;
+}
+
+function formatSourceLogicMarkdown(sourceLogic) {
+  return `## 原文论证理解
+
+- 原文问题域: ${clipText(sourceLogic.problem, 140)}
+- 原文核心判断: ${clipText(sourceLogic.thesis, 140)}
+- 原文关键概念: ${(sourceLogic.terms || []).slice(0, 12).join("、") || "未抽取到稳定概念"}
+
+${sourceLogic.units.map((unit) => `- [${unit.id}] ${unit.role}: ${unit.claim}；关键词：${unit.terms.join("、") || "无"}`).join("\n")}`;
+}
+
 function numberedLines(items, prefix, emptyText, limit = 12) {
   const selected = (items || []).slice(0, limit);
   if (!selected.length) return `- ${emptyText}`;
@@ -1458,9 +1654,11 @@ function mineIdeaTerms(text) {
   const quoted = Array.from(text.matchAll(/[《“"]([^》”"]{2,20})[》”"]/g)).map((match) => match[1]);
   const conceptual = Array.from(text.matchAll(/[\u4e00-\u9fffA-Za-z0-9·]{2,14}(?:思想|义理|危机|进化论|齐物论|经世|问题|资源|处境|转型|现代性|佛教|儒学|庄学|西学|佛学|唯识学|阿赖耶识|本体论|主体|传统|学术)/g))
     .map((match) => match[0].replace(/^的/, ""));
-  const named = Array.from(text.matchAll(/(?:章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|佛教|唯识学|今文经学|理学|庄学|儒学|西学|现代性|阿赖耶识|真如|良知)/g))
+  const named = Array.from(text.matchAll(/(?:章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|佛教|唯识学|今文经学|理学|庄学|儒学|西学|西方进化论|俱分进化论|现代性|现代化|近代科学|阿赖耶识|真如|良知|三籁|乾坤|真如本体|自我知识体系|文化自信|出世性|清末民初|太炎)/g))
     .map((match) => match[0]);
-  return uniqueItems([...named, ...quoted, ...conceptual]).slice(0, 12);
+  const synthetic = [];
+  if (/乾/.test(text) && /坤/.test(text)) synthetic.push("乾坤");
+  return uniqueItems([...named, ...quoted, ...synthetic, ...conceptual]).slice(0, 12);
 }
 
 function buildProblemTopic(argument, terms) {
@@ -1844,29 +2042,42 @@ function citationSourceClause(citations, refs) {
 }
 
 function buildZhangDraft(context) {
-  const { cleanIdea, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const { units, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode, profile } = context;
   const termA = focusTerms[0] || terms[0] || "问题意识";
   const termB = focusTerms[1] || terms[1] || "价值系统";
   const termC = frameTerms[0] || terms[2] || "历史条件";
   const termD = frameTerms[1] || terms[3] || "主体";
   const termE = frameTerms[2] || "思想史";
-  const rejected = contrast?.rejected || `把${termA}还原为单一来源`;
-  const affirmed = contrast?.affirmed || `${termA}在${termC}中的重新组织`;
   const sourceClause = citationSourceClause(citations, refs);
   const voicePrefix = mode === "lecture" ? "在我看来，" : "";
-  const intro =
-    mode === "intro"
-      ? `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
-      : `${voicePrefix}要理解${topic}，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉${termA}如何在${termC}、${termD}与${termE}之间获得重新配置。`;
-  const middle =
-    `如果说通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出它的理论重心。也就是说，${termA}在这里并非一个孤立的义理来源，而是在${termB}、${termC}与${termD}之间发生重新联结的枢纽；${subject}所完成的，也不是把某种外来的概念简单移入中国思想，而是在既有知识传统、现实危机和新的解释需求之间，重新安排可以被论证的思想关系。`;
-  const close =
-    `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${uniqueItems([subject, termA, termB, termC]).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
-  return { argument, ideaPack, citations, draft: `${intro}${middle}${close}` };
+  const paragraphs = units.map((unit, index) => {
+    const unitArg = extractArgument(unit);
+    const unitTerms = termsForRewriteUnit(profile, unit, focusTerms, 6);
+    const localContrast = extractContrastFrame(unit) || contrast || {};
+    const localA = unitTerms[0] || termA;
+    const localB = unitTerms[1] || termB;
+    const localC = unitTerms[2] || termC;
+    const localD = unitTerms[3] || termD;
+    const localClaim = unitClaim(unitArg, unitTerms.join("、") || topic);
+    const rejected = localContrast.rejected || `把${localA}还原为单一来源`;
+    const affirmed = localContrast.affirmed || `${localA}在${localB}、${localC}之间的重新组织`;
+    const unitSource = unitSourceClause(profile, unit, citations);
+    if (index === 0) {
+      const lead = mode === "intro"
+        ? `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
+        : `${voicePrefix}要理解${topic}，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉${termA}如何在${termC}、${termD}与${termE}之间获得重新配置。`;
+      return `${lead}就原文第一层意思说，${localClaim}并不是一个孤立判断，而是把${uniqueItems([localA, localB, localC]).join("、")}放入同一问题域中加以说明。`;
+    }
+    if (index === units.length - 1) {
+      return `${unitSource || sourceClause}最后还需要看到，原文后段关于${localClaim}的展开，使问题不能停留在前面的概念辨析上。正是在此意义上，这一论述的重心不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把${uniqueItems([subject, localA, localB, localC, localD]).join("、")}重新组织为一个有边界的解释。暂时只能说，这一解释为后续论证开出了方向，但仍需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
+    }
+    return `进一步说，如果通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出这一段的理论重心。也就是说，${localA}在这里并非一个可以被单独抽出的名词，而是在${localB}、${localC}与${localD}之间发生重新联结的枢纽；原文关于${localClaim}的说法，正是把这一联结推到更具体的层面。`;
+  });
+  return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
 
 function buildProfileDraft(profile, context) {
-  const { argument, ideaPack, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const { units, argument, ideaPack, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
   const openingMove = dominantMove(profile, "openingMoves", "问题域铺陈");
   const middleMove = dominantMove(profile, "middleMoves", "关系澄清");
   const closingMove = dominantMove(profile, "closingMoves", "有限判断");
@@ -1882,40 +2093,60 @@ function buildProfileDraft(profile, context) {
   const affirmed = contrast?.affirmed || `从${termC}中重新说明${termA}与${termB}的关系`;
   const sourceClause = citationSourceClause(citations, refs);
   const anchorTerms = uniqueItems([subject, termA, termB, termC, termD, ...frameTerms]).slice(0, 6).join("、");
-  const lead =
-    openingMove.includes("历史")
-      ? `若把${topic}放回${termC}的展开过程之中，问题的重心就不只是判断${subject}“是什么”，而是说明${termA}如何在特定历史位置上被重新组织。`
-      : openingMove.includes("文献")
-        ? `从材料线索进入${topic}，先要把${subject}、${termA}与${termB}之间的文本关系交代清楚，而不是先给出一个抽象判断。`
-        : `所谓${topic}，并不是一个可以直接套用定义的对象；它更像是围绕${anchorTerms || termA}展开的问题域。`;
-  const intro = mode === "lecture" ? `在我看来，${lead}` : lead;
-  const middle =
-    `若依照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${rejected}这一层。更关键的是，${affirmed}，这使${termA}不再只是一个名词，而成为连接${termB}、${termC}与${termD}的论证枢纽。${reformMarker}，真正需要展开的是这些概念在文本、历史处境和解释需求之间怎样相互牵动，${causalMarker}才能避免把这一问题化约为单一的解释套路。`;
-  const close =
-    `${sourceClause}从“${closingMove}”的收束方式看，${hedgeMarker}，这段论述目前能够成立的只是一个有边界的解释：它把${anchorTerms || termA}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。后续若要进入正式论文，还需要把关键判断逐条回到原文和页码中核验。`;
-  return { argument, ideaPack, citations, draft: `${intro}${middle}${close}` };
+  const paragraphs = units.map((unit, index) => {
+    const unitArg = extractArgument(unit);
+    const unitTerms = termsForRewriteUnit(profile, unit, focusTerms, 6);
+    const localContrast = extractContrastFrame(unit) || contrast || {};
+    const localA = unitTerms[0] || termA;
+    const localB = unitTerms[1] || termB;
+    const localC = unitTerms[2] || termC;
+    const localD = unitTerms[3] || termD;
+    const localClaim = unitClaim(unitArg, unitTerms.join("、") || topic);
+    const localRejected = localContrast.rejected || rejected;
+    const localAffirmed = localContrast.affirmed || `从${localC}中重新说明${localA}与${localB}的关系`;
+    const unitSource = unitSourceClause(profile, unit, citations);
+    if (index === 0) {
+      const lead =
+        openingMove.includes("历史")
+          ? `若把${topic}放回${termC}的展开过程之中，问题的重心就不只是判断${subject}“是什么”，而是说明${termA}如何在特定历史位置上被重新组织。`
+          : openingMove.includes("文献")
+            ? `从材料线索进入${topic}，先要把${subject}、${termA}与${termB}之间的文本关系交代清楚，而不是先给出一个抽象判断。`
+            : `所谓${topic}，并不是一个可以直接套用定义的对象；它更像是围绕${anchorTerms || termA}展开的问题域。`;
+      return `${mode === "lecture" ? `在我看来，${lead}` : lead}原文首先提出的${localClaim}，应当被理解为${localA}、${localB}与${localC}之间关系的开启，而不是一个已经自足的结论；也就是说，这里真正形成的是一个需要继续展开的问题域。`;
+    }
+    if (index === units.length - 1) {
+      return `${unitSource || sourceClause}从“${closingMove}”的收束方式看，${hedgeMarker}，原文最后关于${localClaim}的说法，把前文的概念线索进一步推向${uniqueItems([localA, localB, localC, localD]).join("、")}之间的关系。可以说，这段改写目前只能构成一个有边界的解释；后续若要进入正式论文，还需要把这些关键判断逐条回到原文和页码中核验。`;
+    }
+    return `若依照“${openingMove}—${middleMove}”的推进方式，这一层需要先承认一般说法的有效范围，${contrastMarker}不能停留在${localRejected}这一层。更关键的是，${localAffirmed}，这使${localA}不再只是一个名词，而成为连接${localB}、${localC}与${localD}的论证枢纽。${reformMarker}，原文关于${localClaim}的材料，正是在这一枢纽上继续展开；${causalMarker}才能避免把全文化约为开头一句的简单改写。`;
+  });
+  return { argument, ideaPack, citations, units, styleLogic: context.styleLogic, sourceLogic: context.sourceLogic, draft: paragraphs.join("\n\n") };
 }
 
-function buildCodexStyleDraft(profile, idea, mode) {
-  const cleanIdea = idea.trim().replace(/\s+/g, " ");
+function buildCodexStyleDraft(profile, idea, mode, longformMode = "1200") {
+  const cleanIdea = normalizeIdeaText(idea);
+  const flatIdea = cleanIdea.replace(/\s+/g, " ");
   const ideaPack = buildIdeaEvidencePack(cleanIdea);
-  const argument = extractArgument(cleanIdea);
-  const terms = pickProfileTerms(profile, cleanIdea, 10);
-  const frameTerms = pickFrameTerms(profile, cleanIdea);
-  const subject = cleanIdea.match(/(章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|周展安|张志强)/)?.[0] || terms[0] || "主体";
+  const argument = extractArgument(flatIdea);
+  const terms = pickProfileTerms(profile, flatIdea, 10);
+  const frameTerms = pickFrameTerms(profile, flatIdea);
+  const subject = flatIdea.match(/(章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|周展安|张志强)/)?.[0] || terms[0] || "主体";
   const focusTerms = terms.filter((term) => term !== subject && !term.includes(subject)).slice(0, 5);
-  const citations = findCitationMatches(profile, cleanIdea, 6);
+  const units = buildRewriteUnits(cleanIdea, rewriteUnitLimit(mode, longformMode));
+  const baseCitations = findCitationMatches(profile, flatIdea, 6);
+  const citations = allUnitCitations(profile, units, baseCitations);
   const refs = uniqueCitationRefs(citations, 3);
   const topic = buildProblemTopic(argument, terms);
-  const contrast = extractContrastFrame(cleanIdea);
-  const context = { cleanIdea, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode };
+  const contrast = extractContrastFrame(flatIdea);
+  const styleLogic = profileStyleLogic(profile);
+  const sourceLogic = analyzeSourceLogic(profile, cleanIdea, units);
+  const context = { profile, cleanIdea, flatIdea, units, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode, longformMode, styleLogic, sourceLogic };
   return isZhangProfile(profile) ? buildZhangDraft(context) : buildProfileDraft(profile, context);
 }
 
-function localDraft(profile, idea, mode) {
-  const cleanIdea = idea.trim().replace(/\s+/g, " ");
+function localDraft(profile, idea, mode, longformMode = "1200") {
+  const cleanIdea = normalizeIdeaText(idea);
   if (!cleanIdea) return "请先输入你的观点。";
-  const result = buildCodexStyleDraft(profile, cleanIdea, mode);
+  const result = buildCodexStyleDraft(profile, cleanIdea, mode, longformMode);
   const audit = styleAudit(profile, result.draft);
   const pack = result.ideaPack || buildIdeaEvidencePack(cleanIdea);
   const sourceNotes = result.citations.length
@@ -1927,7 +2158,14 @@ function localDraft(profile, idea, mode) {
 - 核心判断: ${result.argument.thesis}
 - 证据线索: ${result.argument.evidence.length ? result.argument.evidence.join("；") : "原文暂未给出明确证据。"}
 
+${formatStyleLogicMarkdown(result.styleLogic || profileStyleLogic(profile))}
+
+${formatSourceLogicMarkdown(result.sourceLogic)}
+
 ${formatIdeaPackMarkdown(pack)}
+
+## 全文覆盖检查
+${(result.units || []).map((unit, index) => `- [C${index + 1}] ${clipText(extractArgument(unit).thesis, 120)}`).join("\n") || "- 未形成分块；请检查原文是否为空。"}
 
 ## 风格化改写稿
 
@@ -1963,18 +2201,22 @@ function blendHeader(blended) {
 `;
 }
 
-function blendLocalDraft(profileA, profileB, weightA, idea, mode) {
+function blendLocalDraft(profileA, profileB, weightA, idea, mode, longformMode = "1200") {
   const cleanIdea = idea.trim();
   if (!cleanIdea) return "请先输入你的观点。";
   const blended = createBlendedProfile(profileA, profileB, weightA);
   return `${blendHeader(blended)}
 
-${localDraft(blended, cleanIdea, mode)}`;
+${localDraft(blended, cleanIdea, mode, longformMode)}`;
 }
 
 function aiPrompt(profile, idea, mode, longformMode = "1200") {
   const citations = findCitationMatches(profile, idea, 10);
   const pack = buildIdeaEvidencePack(idea);
+  const normalizedIdea = normalizeIdeaText(idea);
+  const units = buildRewriteUnits(normalizedIdea, rewriteUnitLimit(mode, longformMode));
+  const styleLogic = profileStyleLogic(profile);
+  const sourceLogic = analyzeSourceLogic(profile, normalizedIdea, units);
   return `你不是普通润色器。你要作为“文本特征分析器 + 学术风格转换器”工作，依据以下“${profile.name}”风格 profile，把我的观点改写为风格化学术文本。
 
 重要边界：
@@ -1988,9 +2230,14 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 8. 如果当前 profile 不是张志强，不得自动套入张志强的“现代学术/思想史/义理”框架，除非我的原文或 profile 明确出现这些词。
 9. 原始观点无字数上限；必须先完整吸收，再分块改写。不得因为原文很长而只处理开头或结尾。
 10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“原始观点吸收包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
+11. 必须先做底层理解，再写正文：先抽取当前 profile 的四层风格逻辑，再理解我的原文每一块在论证中的作用，最后才进行风格迁移。不要只改写第一句，不要跳过后半段。
 
 目标体裁：${mode}
 生成规模：${longformMode}
+
+${formatStyleLogicMarkdown(styleLogic)}
+
+${formatSourceLogicMarkdown(sourceLogic)}
 
 ${formatIdeaPackForPrompt(pack)}
 
@@ -2010,6 +2257,15 @@ ${idea.trim()}
 - 核心判断:
 - 已有证据:
 - 仍缺证据:
+
+## 作者底层风格模型
+- 词汇层:
+- 句子层:
+- 段落层:
+- 论证层:
+
+## 原文论证理解
+- 请逐块说明 [C1] [C2] [C3]... 各自承担的问题、证据、转折或收束作用。
 
 ## 风格化改写稿
 要求：
@@ -2223,7 +2479,7 @@ function bindEvents() {
   });
 
   qs("#draftButton").addEventListener("click", () => {
-    qs("#rewriteOutput").value = localDraft(activeProfile(), qs("#ideaInput").value, qs("#rewriteMode").value);
+    qs("#rewriteOutput").value = localDraft(activeProfile(), qs("#ideaInput").value, qs("#rewriteMode").value, qs("#longformMode").value);
   });
 
   qs("#promptButton").addEventListener("click", () => {
@@ -2261,7 +2517,7 @@ function bindEvents() {
 
   qs("#blendDraftButton").addEventListener("click", () => {
     const { profileA, profileB, weightA } = selectedBlendConfig();
-    qs("#blendOutput").value = blendLocalDraft(profileA, profileB, weightA, qs("#blendIdeaInput").value, qs("#blendModeSelect").value);
+    qs("#blendOutput").value = blendLocalDraft(profileA, profileB, weightA, qs("#blendIdeaInput").value, qs("#blendModeSelect").value, qs("#blendLongformMode").value);
   });
 
   qs("#blendPromptButton").addEventListener("click", () => {
