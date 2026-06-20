@@ -916,6 +916,78 @@ ${(profile.negative || []).map((item) => `- ${item}`).join("\n")}
 `;
 }
 
+function formatBriefList(items, limit = 8, empty = "暂无记录") {
+  const rows = (items || [])
+    .filter(Boolean)
+    .slice(0, limit)
+    .map((item) => (typeof item === "string" ? item : item.item || item.title || ""));
+  return rows.length ? rows.map((item) => `- ${item}`).join("\n") : `- ${empty}`;
+}
+
+function formatMoveList(moves, limit = 4) {
+  const rows = (moves || []).slice(0, limit).map((entry) => `${entry.item}${entry.count ? `（${entry.count}）` : ""}`);
+  return rows.length ? rows.join("、") : "暂无记录";
+}
+
+function profileToHumanBrief(profile) {
+  const sources = profile.sources || [];
+  const paragraphModel = profile.paragraphModel || {};
+  const quoteRatio = profile.voiceStats?.quoteRatio != null ? `${Math.round(profile.voiceStats.quoteRatio * 100)}%` : "未统计";
+  return `${profile.name} 写作档案说明
+
+这是什么
+这是一个由网页根据语料自动生成的“写作风格档案”。它用来帮助使用者分析和改写中文学术文本，例如把自己的观点改写成更接近某位学者的论述结构、遣词方式和段落推进方式。
+
+它不是该学者本人，也不代表该学者观点；正式论文仍然需要自己核验文献、页码和原文。
+
+适合用来做什么
+- 把自己的观点改写成更像学术论文段落的表达。
+- 检查一段文字是否太像普通 AI 润色腔。
+- 根据已导入语料，提示可能相关的出处线索。
+- 为一个学者或一组文章整理“写作规则说明”。
+
+不适合直接做什么
+- 不适合把生成结果当作最终论文直接提交。
+- 不适合冒充某位学者本人发言。
+- 不适合在没有核验的情况下直接使用出处。
+
+语料概况
+- 来源数量：${sources.length || profile.stats?.documents || 0}
+- 语料规模：约 ${profile.stats?.tokens || 0} tokens，${profile.stats?.sentences || 0} 句
+- 平均句长：${profile.stats?.avgSentenceLength ?? "未统计"}
+- 作者文本/长引文分离：长引文约占 ${quoteRatio}
+
+语料来源
+${sources.length ? sources.map((source) => `- [${source.id}] ${source.title}${source.type ? `（${source.type}）` : ""}`).join("\n") : "- 暂无记录"}
+
+主要风格特点
+1. 高频概念词
+${formatBriefList(profile.lexicon, 12)}
+
+2. 常见连接方式
+- 转折/区分：${(profile.markers?.contrast || []).slice(0, 10).join("、") || "暂无记录"}
+- 因果/推进：${(profile.markers?.causal || []).slice(0, 8).join("、") || "暂无记录"}
+- 谨慎判断：${(profile.markers?.hedge || []).slice(0, 8).join("、") || "暂无记录"}
+
+3. 段落推进习惯
+- 开头常见动作：${formatMoveList(paragraphModel.openingMoves)}
+- 中段常见动作：${formatMoveList(paragraphModel.middleMoves)}
+- 收束常见动作：${formatMoveList(paragraphModel.closingMoves)}
+
+推荐使用流程
+1. 在左侧选择这个档案。
+2. 打开“改写”，粘贴自己的原始观点或段落。
+3. 点击“Codex 风格重构”，先得到本地改写稿。
+4. 如果填写了 API Key，可以再点击“调用模型生成长文”。
+5. 打开“诊断”，把生成结果贴进去，看它是否接近当前档案。
+6. 打开“文献”，核对建议出处是否真的支持你的论断。
+
+给使用者的提醒
+- 好的用法是“借它改写结构和表达”，不是让它替你想完所有论证。
+- 引用别人原文时，必须自己回到原文核页码。
+- 如果要分享给别人导入网站，请导出“完整档案”；如果只是让别人理解这个档案，就发这份说明。`;
+}
+
 function citationIndexToMarkdown(profile) {
   return `# ${profile.name} 引用索引
 
@@ -1487,12 +1559,17 @@ function bindEvents() {
 
   qs("#exportProfileButton").addEventListener("click", () => {
     const profile = activeProfile();
-    download(`${profile.name}-profile.json`, JSON.stringify(profile, null, 2), "application/json;charset=utf-8");
+    download(`${profile.name}-完整档案.json`, JSON.stringify(profile, null, 2), "application/json;charset=utf-8");
+  });
+
+  qs("#exportBriefButton").addEventListener("click", () => {
+    const profile = activeProfile();
+    download(`${profile.name}-给人看的说明.txt`, profileToHumanBrief(profile));
   });
 
   qs("#exportRulebookButton").addEventListener("click", () => {
     const profile = activeProfile();
-    download(`${profile.name}-rules.md`, profileToMarkdown(profile));
+    download(`${profile.name}-给AI的提示词.md`, profileToMarkdown(profile));
   });
 
   qs("#exportCitationIndexButton").addEventListener("click", () => {

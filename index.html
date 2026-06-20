@@ -26,15 +26,27 @@
         </section>
 
         <section class="panel compact">
-          <h2>导入导出</h2>
-          <div class="button-row">
-            <label class="file-button">
-              导入 JSON
-              <input id="importProfileInput" type="file" accept=".json" />
-            </label>
-            <button id="exportProfileButton">导出 JSON</button>
+          <h2>分享与备份</h2>
+          <div class="export-stack">
+            <button id="exportBriefButton" class="wide-button primary-button">导出给人看的说明</button>
+            <p class="export-help">一页中文说明，适合发给朋友看这个档案能做什么。</p>
+
+            <button id="exportRulebookButton" class="wide-button">导出给 AI 的提示词</button>
+            <p class="export-help">适合复制给 ChatGPT、Claude 或 Codex 作为风格规则。</p>
           </div>
-          <button id="exportRulebookButton" class="wide-button">导出规则 Markdown</button>
+
+          <details class="backup-details">
+            <summary>高级：迁移完整档案</summary>
+            <div class="button-row">
+              <label class="file-button">
+                导入完整档案
+                <input id="importProfileInput" type="file" accept=".json" />
+              </label>
+              <button id="exportProfileButton">导出完整档案</button>
+            </div>
+            <p class="export-help">这是给网站重新导入用的 JSON，普通人不用打开看。</p>
+          </details>
+
           <div class="button-row profile-actions">
             <button id="deleteProfileButton">删除当前</button>
             <button id="resetProfilesButton">恢复样例</button>

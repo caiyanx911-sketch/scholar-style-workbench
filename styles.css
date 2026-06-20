@@ -263,6 +263,36 @@ h1 {
   margin-top: 8px;
 }
 
+.export-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.export-help {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.backup-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(122, 85, 50, 0.22);
+}
+
+.backup-details summary {
+  cursor: pointer;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.backup-details .button-row {
+  margin-top: 8px;
+}
+
 .profile-actions {
   margin-top: 8px;
 }
