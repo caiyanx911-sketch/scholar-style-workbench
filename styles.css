@@ -1,15 +1,19 @@
 :root {
-  --paper: #f7f5ef;
-  --surface: #fffefa;
-  --line: #d8d2c4;
-  --ink: #27241f;
-  --muted: #6f6a60;
-  --accent: #2f6f5e;
-  --accent-dark: #1f4d42;
-  --cinnabar: #a44336;
-  --gold: #c1994d;
-  --wash: #e9efe8;
-  --shadow: 0 18px 40px rgba(39, 36, 31, 0.08);
+  --paper: #f4efe6;
+  --paper-deep: #e8dfd1;
+  --surface: #fffdf8;
+  --surface-soft: #fbf6ed;
+  --line: #d8c9b7;
+  --ink: #211b18;
+  --muted: #74685e;
+  --accent: #9f1738;
+  --accent-dark: #6f0f27;
+  --accent-soft: #f4e2e5;
+  --jade: #2c6658;
+  --gold: #b88a3d;
+  --wash: #f2e8e0;
+  --shadow: 0 22px 50px rgba(68, 35, 27, 0.12);
+  --soft-shadow: 0 10px 26px rgba(68, 35, 27, 0.08);
 }
 
 * {
@@ -32,6 +36,10 @@ body {
 
 body {
   overflow-x: hidden;
+  background:
+    linear-gradient(90deg, rgba(159, 23, 56, 0.055) 0 1px, transparent 1px 80px),
+    linear-gradient(180deg, rgba(184, 138, 61, 0.055) 0 1px, transparent 1px 80px),
+    linear-gradient(135deg, #f8f3ea 0%, #f5efe5 46%, #ece3d7 100%);
 }
 
 button,
@@ -44,11 +52,12 @@ textarea {
 button {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
+  background: linear-gradient(180deg, #fffdf8, #f8f1e8);
   color: var(--ink);
   min-height: 38px;
   padding: 8px 12px;
   cursor: pointer;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
 }
 
 button:hover,
@@ -57,39 +66,55 @@ button:hover,
 }
 
 .primary-button {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--accent-dark);
+  background: linear-gradient(180deg, #b51d43, var(--accent));
   color: #fffefa;
+  box-shadow: 0 10px 22px rgba(159, 23, 56, 0.22);
 }
 
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 330px minmax(0, 1fr);
 }
 
 .sidebar {
-  border-right: 1px solid var(--line);
-  background: #eee9dc;
-  padding: 18px;
+  border-right: 1px solid rgba(111, 15, 39, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.42), rgba(255, 253, 248, 0)),
+    linear-gradient(180deg, #ece1d3, #e4dacd);
+  padding: 20px 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  position: relative;
+}
+
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--gold), var(--jade));
 }
 
 .brand-block {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
+  grid-template-columns: 68px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+  padding: 8px 2px 6px;
 }
 
 .brand-image {
-  width: 74px;
-  height: 74px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid var(--line);
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  border-radius: 50%;
+  border: 1px solid rgba(159, 23, 56, 0.2);
+  background: #fff;
+  padding: 6px;
+  box-shadow: var(--soft-shadow);
 }
 
 h1,
@@ -102,6 +127,7 @@ p {
 h1 {
   font-size: 20px;
   line-height: 1.2;
+  letter-spacing: 0;
 }
 
 .brand-block p,
@@ -120,14 +146,16 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
 }
 
 .panel {
-  padding: 14px;
+  padding: 15px;
 }
 
 .panel.compact {
-  box-shadow: none;
+  box-shadow: var(--soft-shadow);
 }
 
 .panel-head,
@@ -164,12 +192,15 @@ h1 {
   text-align: left;
   display: grid;
   gap: 3px;
-  background: #fbfaf5;
+  background: var(--surface-soft);
 }
 
 .profile-item.active {
   border-color: var(--accent);
-  background: var(--wash);
+  background:
+    linear-gradient(90deg, rgba(159, 23, 56, 0.12), rgba(184, 138, 61, 0.08)),
+    #fffaf2;
+  box-shadow: 0 8px 18px rgba(159, 23, 56, 0.12);
 }
 
 .profile-name {
@@ -223,20 +254,42 @@ h1 {
 
 .workspace {
   min-width: 0;
-  padding: 22px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
 .topbar {
-  min-height: 72px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 16px;
+  min-height: 88px;
+  border: 1px solid rgba(216, 201, 183, 0.9);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(90deg, rgba(159, 23, 56, 0.09), rgba(184, 138, 61, 0.08), rgba(255, 253, 248, 0.92)),
+    var(--surface);
+  box-shadow: var(--soft-shadow);
+}
+
+.title-lockup {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 13px;
+  align-items: center;
+}
+
+.topbar-logo {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #fff;
+  padding: 5px;
+  border: 1px solid rgba(159, 23, 56, 0.2);
 }
 
 .eyebrow {
-  color: var(--cinnabar);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -244,7 +297,19 @@ h1 {
 }
 
 .topbar h2 {
-  font-size: 28px;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.profile-current {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profile-current span {
+  color: var(--accent-dark);
+  font-weight: 700;
 }
 
 .mode-controls {
@@ -253,7 +318,8 @@ h1 {
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #eee9dc;
+  background: rgba(255, 253, 248, 0.8);
+  box-shadow: 0 1px 0 #fff inset;
 }
 
 .tab-button {
@@ -265,6 +331,7 @@ h1 {
 .tab-button.active {
   background: var(--accent);
   color: white;
+  box-shadow: 0 8px 16px rgba(159, 23, 56, 0.2);
 }
 
 .tab-panel {
@@ -283,10 +350,18 @@ h1 {
 }
 
 .tool-surface {
-  padding: 18px;
+  padding: 19px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.tool-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--accent), rgba(184, 138, 61, 0.75), transparent);
 }
 
 .tool-surface.full {
@@ -304,9 +379,17 @@ h1 {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fffefa;
+  background: #fffdfa;
   color: var(--ink);
   padding: 10px 11px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+}
+
+.text-input:focus,
+.large-textarea:focus,
+.output-textarea:focus {
+  outline: 2px solid rgba(159, 23, 56, 0.16);
+  border-color: rgba(159, 23, 56, 0.55);
 }
 
 .compact-select {
@@ -333,7 +416,9 @@ h1 {
   min-height: 60px;
   border: 1px dashed var(--line);
   border-radius: 8px;
-  background: #fbfaf5;
+  background:
+    linear-gradient(180deg, rgba(159, 23, 56, 0.035), rgba(184, 138, 61, 0.04)),
+    #fffbf4;
   display: grid;
   place-items: center;
   gap: 2px;
@@ -343,7 +428,7 @@ h1 {
 
 .corpus-file-picker:hover {
   border-color: var(--accent);
-  background: var(--wash);
+  background: var(--accent-soft);
 }
 
 .corpus-file-picker span {
@@ -379,7 +464,9 @@ h1 {
   min-height: 420px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfaf5;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.92), rgba(250, 244, 235, 0.92)),
+    var(--surface-soft);
   padding: 14px;
   overflow: auto;
 }
@@ -395,13 +482,16 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
-  background: var(--surface);
+  background:
+    linear-gradient(180deg, #fffdf8, #faf2e8);
+  box-shadow: 0 8px 18px rgba(68, 35, 27, 0.06);
 }
 
 .metric strong {
   display: block;
   font-size: 22px;
   line-height: 1.2;
+  color: var(--accent-dark);
 }
 
 .metric span {
@@ -416,11 +506,12 @@ h1 {
 }
 
 .tag {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(159, 23, 56, 0.16);
   border-radius: 8px;
   padding: 5px 8px;
-  background: #f7f5ef;
+  background: #fff8ef;
   font-size: 12px;
+  color: #4b332c;
 }
 
 .source-list,
@@ -436,7 +527,7 @@ h1 {
 .structure-item {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
+  background: linear-gradient(180deg, #fffdf8, #fbf4eb);
   padding: 10px;
 }
 
@@ -456,7 +547,7 @@ h1 {
 }
 
 .citation-ref {
-  color: var(--cinnabar);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -470,7 +561,8 @@ h1 {
   line-height: 1.7;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfaf5;
+  background:
+    linear-gradient(180deg, #fffdf8, #fbf5ec);
   padding: 16px;
   min-height: 560px;
   overflow: auto;
@@ -534,6 +626,15 @@ h1 {
     flex-direction: column;
   }
 
+  .title-lockup {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .topbar-logo {
+    width: 48px;
+    height: 48px;
+  }
+
   .mode-controls {
     width: 100%;
     overflow-x: auto;
@@ -564,7 +665,18 @@ h1 {
   }
 
   .topbar h2 {
-    font-size: 22px;
+    font-size: 24px;
+  }
+
+  .mode-controls {
+    gap: 4px;
+  }
+
+  .tab-button {
+    flex: 1 1 54px;
+    min-width: 54px;
+    padding: 8px 7px;
+    font-size: 14px;
   }
 
   .large-textarea,

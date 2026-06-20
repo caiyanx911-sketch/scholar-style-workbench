@@ -3,23 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>学者风格工作台</title>
+    <title>薛博士的私人小助理</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="学者档案">
         <div class="brand-block">
-          <img src="./assets/workbench-pattern.png" alt="" class="brand-image" />
+          <img src="./assets/ruc-emblem.png" alt="中国人民大学校徽" class="brand-image" />
           <div>
-            <h1>学者风格工作台</h1>
-            <p>语料分析 · 风格规则 · 改写诊断</p>
+            <h1>薛博士的私人小助理</h1>
+            <p>中国人民大学 · 学术写作工作台</p>
           </div>
         </div>
 
         <section class="panel">
           <div class="panel-head">
-            <h2>Profiles</h2>
+            <h2>学者档案</h2>
             <button class="icon-button" id="newProfileButton" title="新建 profile" aria-label="新建 profile">+</button>
           </div>
           <div id="profileList" class="profile-list"></div>
@@ -74,9 +74,13 @@
 
       <main class="workspace">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Style Lab</p>
-            <h2 id="activeProfileTitle">张志强</h2>
+          <div class="title-lockup">
+            <img src="./assets/ruc-emblem.png" alt="中国人民大学校徽" class="topbar-logo" />
+            <div>
+              <p class="eyebrow">Private Research Assistant</p>
+              <h2>薛博士的私人小助理</h2>
+              <p class="profile-current">当前 profile：<span id="activeProfileTitle">张志强</span></p>
+            </div>
           </div>
           <div class="mode-controls" role="tablist" aria-label="工作区">
             <button class="tab-button active" data-tab="build" role="tab">建模</button>
