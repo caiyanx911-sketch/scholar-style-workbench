@@ -1193,6 +1193,117 @@ function extractArgument(text) {
   };
 }
 
+function clipText(text, limit = 160) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
+}
+
+function chunkIdeaText(text, maxChars = 1600) {
+  const paragraphs = text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const units = paragraphs.length ? paragraphs : splitSentences(text);
+  const chunks = [];
+  let current = "";
+  units.forEach((unit) => {
+    if (unit.length > maxChars) {
+      splitSentences(unit).forEach((sentence) => {
+        if ((current + sentence).length > maxChars && current) {
+          chunks.push(current.trim());
+          current = "";
+        }
+        current += `${sentence} `;
+      });
+      return;
+    }
+    if ((current + unit).length > maxChars && current) {
+      chunks.push(current.trim());
+      current = "";
+    }
+    current += `${unit}\n\n`;
+  });
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [text.trim()];
+}
+
+function collectSentences(sentences, pattern, limit) {
+  return uniqueItems(sentences.filter((sentence) => pattern.test(sentence)).map((sentence) => clipText(sentence, 180))).slice(0, limit);
+}
+
+function buildIdeaEvidencePack(text) {
+  const clean = text.trim().replace(/\r\n?/g, "\n");
+  const sentences = splitSentences(clean);
+  const chunks = chunkIdeaText(clean);
+  const claims = collectSentences(sentences, /(并非|不是|不只是|而是|认为|应当|需要|关键|核心|意味着|可以说|显示出|说明)/, 10);
+  const evidence = collectSentences(sentences, /(因为|由于|例如|比如|材料|文本|文献|显示|说明|一方面|另一方面|首先|其次|其一|其二|可见|由此)/, 12);
+  const uncertainty = collectSentences(sentences, /(可能|或许|似乎|大致|仍需|有待|不能简单|尚需|待核验|需要进一步)/, 8);
+  const terms = mineIdeaTerms(clean).slice(0, 12);
+  const chunkSummaries = chunks.map((chunk, index) => {
+    const arg = extractArgument(chunk);
+    return {
+      id: `C${index + 1}`,
+      chars: chunk.length,
+      thesis: clipText(arg.thesis, 130),
+      evidence: arg.evidence.map((item) => clipText(item, 130)).slice(0, 2),
+    };
+  });
+  return {
+    chars: clean.length,
+    sentences: sentences.length,
+    chunks: chunks.length,
+    terms,
+    claims: claims.length ? claims : sentences.slice(0, 3).map((sentence) => clipText(sentence, 180)),
+    evidence,
+    uncertainty,
+    chunkSummaries,
+  };
+}
+
+function numberedLines(items, prefix, emptyText, limit = 12) {
+  const selected = (items || []).slice(0, limit);
+  if (!selected.length) return `- ${emptyText}`;
+  return selected.map((item, index) => `- [${prefix}${index + 1}] ${item}`).join("\n");
+}
+
+function formatIdeaPackMarkdown(pack) {
+  return `## 原始观点吸收包
+
+- 输入规模: ${pack.chars} 字符；${pack.sentences} 个句子；已分为 ${pack.chunks} 个材料块。
+- 关键词: ${pack.terms.join("、") || "未抽出稳定关键词"}
+
+### 分块理解
+${pack.chunkSummaries.map((chunk) => `- [${chunk.id}] ${chunk.chars} 字符：${chunk.thesis}`).join("\n")}
+
+### 证据锁定句
+${numberedLines(pack.evidence, "E", "原文没有明显证据句；改写时只能保留为观点，不得补成事实。")}
+
+### 核心判断句
+${numberedLines(pack.claims, "P", "原文没有明显判断句；请先补充核心观点。", 10)}
+
+### 不确定/待核验
+${numberedLines(pack.uncertainty, "U", "原文没有显式不确定句；凡超出原文的外部事实仍需核验。", 8)}`;
+}
+
+function formatIdeaPackForPrompt(pack) {
+  return `【原始观点吸收包】
+输入规模：${pack.chars} 字符；${pack.sentences} 个句子；${pack.chunks} 个材料块。
+关键词：${pack.terms.join("、") || "未抽出稳定关键词"}
+
+分块理解：
+${pack.chunkSummaries.map((chunk) => `[${chunk.id}] ${chunk.thesis}`).join("\n")}
+
+证据锁定句：
+${numberedLines(pack.evidence, "E", "无明显证据句；不得补写成事实。")}
+
+核心判断句：
+${numberedLines(pack.claims, "P", "无明显判断句；不得代替用户立论。", 10)}
+
+不确定/待核验：
+${numberedLines(pack.uncertainty, "U", "无显式不确定句；超出原文的事实判断都要标为仍需核验。", 8)}`;
+}
+
 function isZhangProfile(profile) {
   return profile.id === "zhang-zhiqiang" || profile.name === "张志强";
 }
@@ -1459,7 +1570,7 @@ function citationSourceClause(citations, refs) {
 }
 
 function buildZhangDraft(context) {
-  const { cleanIdea, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const { cleanIdea, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
   const termA = focusTerms[0] || terms[0] || "问题意识";
   const termB = focusTerms[1] || terms[1] || "价值系统";
   const termC = frameTerms[0] || terms[2] || "历史条件";
@@ -1477,11 +1588,11 @@ function buildZhangDraft(context) {
     `如果说通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出它的理论重心。也就是说，${termA}在这里并非一个孤立的义理来源，而是在${termB}、${termC}与${termD}之间发生重新联结的枢纽；${subject}所完成的，也不是把某种外来的概念简单移入中国思想，而是在既有知识传统、现实危机和新的解释需求之间，重新安排可以被论证的思想关系。`;
   const close =
     `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${uniqueItems([subject, termA, termB, termC]).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
-  return { argument, citations, draft: `${intro}${middle}${close}` };
+  return { argument, ideaPack, citations, draft: `${intro}${middle}${close}` };
 }
 
 function buildProfileDraft(profile, context) {
-  const { argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const { argument, ideaPack, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
   const openingMove = dominantMove(profile, "openingMoves", "问题域铺陈");
   const middleMove = dominantMove(profile, "middleMoves", "关系澄清");
   const closingMove = dominantMove(profile, "closingMoves", "有限判断");
@@ -1508,11 +1619,12 @@ function buildProfileDraft(profile, context) {
     `若依照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${rejected}这一层。更关键的是，${affirmed}，这使${termA}不再只是一个名词，而成为连接${termB}、${termC}与${termD}的论证枢纽。${reformMarker}，真正需要展开的是这些概念在文本、历史处境和解释需求之间怎样相互牵动，${causalMarker}才能避免把这一问题化约为单一的解释套路。`;
   const close =
     `${sourceClause}从“${closingMove}”的收束方式看，${hedgeMarker}，这段论述目前能够成立的只是一个有边界的解释：它把${anchorTerms || termA}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。后续若要进入正式论文，还需要把关键判断逐条回到原文和页码中核验。`;
-  return { argument, citations, draft: `${intro}${middle}${close}` };
+  return { argument, ideaPack, citations, draft: `${intro}${middle}${close}` };
 }
 
 function buildCodexStyleDraft(profile, idea, mode) {
   const cleanIdea = idea.trim().replace(/\s+/g, " ");
+  const ideaPack = buildIdeaEvidencePack(cleanIdea);
   const argument = extractArgument(cleanIdea);
   const terms = pickProfileTerms(profile, cleanIdea, 10);
   const frameTerms = pickFrameTerms(profile, cleanIdea);
@@ -1522,7 +1634,7 @@ function buildCodexStyleDraft(profile, idea, mode) {
   const refs = uniqueCitationRefs(citations, 3);
   const topic = buildProblemTopic(argument, terms);
   const contrast = extractContrastFrame(cleanIdea);
-  const context = { cleanIdea, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode };
+  const context = { cleanIdea, ideaPack, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode };
   return isZhangProfile(profile) ? buildZhangDraft(context) : buildProfileDraft(profile, context);
 }
 
@@ -1531,6 +1643,7 @@ function localDraft(profile, idea, mode) {
   if (!cleanIdea) return "请先输入你的观点。";
   const result = buildCodexStyleDraft(profile, cleanIdea, mode);
   const audit = styleAudit(profile, result.draft);
+  const pack = result.ideaPack || buildIdeaEvidencePack(cleanIdea);
   const sourceNotes = result.citations.length
     ? result.citations.map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n")
     : "- 暂无候选出处；请先在“建模”页导入目标学者或主题文献。";
@@ -1539,6 +1652,8 @@ function localDraft(profile, idea, mode) {
 - 问题域: ${result.argument.problem}
 - 核心判断: ${result.argument.thesis}
 - 证据线索: ${result.argument.evidence.length ? result.argument.evidence.join("；") : "原文暂未给出明确证据。"}
+
+${formatIdeaPackMarkdown(pack)}
 
 ## 风格化改写稿
 
@@ -1560,11 +1675,13 @@ ${sourceNotes}
 
 ## 需要你确认的地方
 - 这段改写没有冒充作者，也没有复制来源原文。
+- 本地重构只使用“原始观点吸收包”和当前 profile 的风格规则；凡未在原文或引用索引中出现的事实，都应视为仍需核验。
 - 如果要进入正式论文写作，需要补充具体文献、页码和原文证据。`;
 }
 
 function aiPrompt(profile, idea, mode, longformMode = "1200") {
   const citations = findCitationMatches(profile, idea, 10);
+  const pack = buildIdeaEvidencePack(idea);
   return `你不是普通润色器。你要作为“文本特征分析器 + 学术风格转换器”工作，依据以下“${profile.name}”风格 profile，把我的观点改写为风格化学术文本。
 
 重要边界：
@@ -1576,9 +1693,13 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 6. 输出后必须做风格自检，并列出需要核验的事实。
 7. 必须优先使用当前 profile 的独有概念词、连接词、段落动作和句长节奏；不要把不同作者都写成“要理解……不能只……”这一套模板。
 8. 如果当前 profile 不是张志强，不得自动套入张志强的“现代学术/思想史/义理”框架，除非我的原文或 profile 明确出现这些词。
+9. 原始观点无字数上限；必须先完整吸收，再分块改写。不得因为原文很长而只处理开头或结尾。
+10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“原始观点吸收包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
 
 目标体裁：${mode}
 生成规模：${longformMode}
+
+${formatIdeaPackForPrompt(pack)}
 
 风格规则：
 ${profileToMarkdown(profile)}
@@ -1611,6 +1732,7 @@ ${idea.trim()}
 - 段落:
 - 论证:
 - 反 ChatGPT 腔检查:
+- 证据边界检查: 逐条说明核心判断分别来自 [P]/[E]/[S] 哪个编号；没有编号支撑的，必须列入“仍需进一步核验”。
 
 ## 需要核验的地方
 - `;
@@ -1625,14 +1747,17 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
 3. 风格化正文
 4. 风格自检
 5. 出处标注说明
-6. 需要核验的地方
+6. 材料使用表
+7. 需要核验的地方
 
 正文要求：
 - 用中文学术文体写作。
 - 段落推进要体现：问题域提出、概念区分、文献线索、有限判断。
 - 不要照搬 profile 或引用索引中的句子。
 - 不要使用普通 AI 润色腔，如“首先/其次/最后”“综上所述”“影响深远”“值得我们思考”。
-- 对没有出处支撑的判断，用“仍需进一步核验”标出。`;
+- 对没有出处支撑的判断，用“仍需进一步核验”标出。
+- 如果原始观点很长，先按材料块重组论证，不要遗漏后半部分。
+- 材料使用表必须列出：改写后的关键判断 -> 原始观点编号 [P/E/U] 或文献编号 [S] -> 是否需要进一步核验。`;
 }
 
 async function callOpenAIResponse(prompt) {
@@ -1642,7 +1767,7 @@ async function callOpenAIResponse(prompt) {
     model: aiSettings.model,
     input: prompt,
     store: false,
-    max_output_tokens: 4200,
+    max_output_tokens: 6500,
   };
   if (/^gpt-5|^o\d/i.test(aiSettings.model)) {
     payload.reasoning = { effort: aiSettings.reasoning };
