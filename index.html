@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>学者风格工作台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="学者档案">
+        <div class="brand-block">
+          <img src="./assets/workbench-pattern.png" alt="" class="brand-image" />
+          <div>
+            <h1>学者风格工作台</h1>
+            <p>语料分析 · 风格规则 · 改写诊断</p>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Profiles</h2>
+            <button class="icon-button" id="newProfileButton" title="新建 profile" aria-label="新建 profile">+</button>
+          </div>
+          <div id="profileList" class="profile-list"></div>
+        </section>
+
+        <section class="panel compact">
+          <h2>导入导出</h2>
+          <div class="button-row">
+            <label class="file-button">
+              导入 JSON
+              <input id="importProfileInput" type="file" accept=".json" />
+            </label>
+            <button id="exportProfileButton">导出 JSON</button>
+          </div>
+          <button id="exportRulebookButton" class="wide-button">导出规则 Markdown</button>
+          <div class="button-row profile-actions">
+            <button id="deleteProfileButton">删除当前</button>
+            <button id="resetProfilesButton">恢复样例</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Style Lab</p>
+            <h2 id="activeProfileTitle">张志强</h2>
+          </div>
+          <div class="mode-controls" role="tablist" aria-label="工作区">
+            <button class="tab-button active" data-tab="build" role="tab">建模</button>
+            <button class="tab-button" data-tab="rewrite" role="tab">改写</button>
+            <button class="tab-button" data-tab="diagnose" role="tab">诊断</button>
+            <button class="tab-button" data-tab="rules" role="tab">规则</button>
+          </div>
+        </header>
+
+        <section id="buildTab" class="tab-panel active">
+          <div class="section-grid">
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>导入语料</h3>
+                <p>支持 .txt/.md 或直接粘贴。PDF 先复制文字，后续可加后端提取。</p>
+              </div>
+              <label class="field-label" for="profileNameInput">学者名称</label>
+              <input id="profileNameInput" class="text-input" value="新学者" />
+
+              <label class="field-label" for="corpusFilesInput">语料文件</label>
+              <label class="corpus-file-picker" for="corpusFilesInput">
+                <span>选择 TXT / MD 语料</span>
+                <small>可多选；PDF 请先复制文字到下方</small>
+                <input id="corpusFilesInput" type="file" accept=".txt,.md,.pdf" multiple />
+              </label>
+              <p id="fileStatus" class="hint">尚未选择文件。</p>
+
+              <label class="field-label" for="corpusTextInput">粘贴语料</label>
+              <textarea id="corpusTextInput" class="large-textarea" placeholder="把文章、章节或整理后的语料粘贴到这里。"></textarea>
+
+              <div class="button-row">
+                <button id="analyzeCorpusButton" class="primary-button">生成 Profile</button>
+                <button id="clearCorpusButton">清空</button>
+              </div>
+            </section>
+
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>分析预览</h3>
+                <p>生成后会保存到左侧 profile 列表。</p>
+              </div>
+              <div id="analysisPreview" class="analysis-preview">
+                <p class="empty-state">导入语料后，这里会显示句长、连接词、概念词和论证结构信号。</p>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="rewriteTab" class="tab-panel">
+          <div class="section-grid">
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>输入你的观点</h3>
+                <p>网站本地生成结构化草稿和 AI 调用 prompt。</p>
+              </div>
+              <label class="field-label" for="rewriteMode">目标体裁</label>
+              <select id="rewriteMode" class="text-input">
+                <option value="article">论文段落</option>
+                <option value="lecture">讲稿段落</option>
+                <option value="intro">引言开头</option>
+                <option value="concept">概念解释</option>
+                <option value="conclusion">结论段落</option>
+              </select>
+
+              <label class="field-label" for="ideaInput">你的原始观点</label>
+              <textarea id="ideaInput" class="large-textarea" placeholder="例如：AI 工具改变学术写作，不只是提高效率，也改变了知识生产方式。"></textarea>
+
+              <div class="button-row">
+                <button id="draftButton" class="primary-button">生成本地草稿</button>
+                <button id="promptButton">生成 AI Prompt</button>
+              </div>
+            </section>
+
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>输出</h3>
+                <p>本地草稿适合打底；AI Prompt 适合复制到 Codex/ChatGPT。</p>
+              </div>
+              <textarea id="rewriteOutput" class="output-textarea" readonly></textarea>
+              <button id="copyRewriteButton" class="wide-button">复制输出</button>
+            </section>
+          </div>
+        </section>
+
+        <section id="diagnoseTab" class="tab-panel">
+          <div class="section-grid">
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>诊断文本</h3>
+                <p>检查它是否接近当前 profile 的话语结构。</p>
+              </div>
+              <textarea id="diagnoseInput" class="large-textarea" placeholder="粘贴一段待检查文本。"></textarea>
+              <button id="diagnoseButton" class="primary-button">开始诊断</button>
+            </section>
+            <section class="tool-surface">
+              <div class="section-head">
+                <h3>诊断结果</h3>
+                <p>分数不是检测器，只是风格贴近度参考。</p>
+              </div>
+              <div id="diagnoseOutput" class="diagnose-output">
+                <p class="empty-state">诊断结果会显示在这里。</p>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="rulesTab" class="tab-panel">
+          <section class="tool-surface full">
+            <div class="section-head">
+              <h3>当前规则</h3>
+              <p>这是当前 profile 的可执行风格说明。</p>
+            </div>
+            <pre id="rulebookView" class="rulebook"></pre>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
