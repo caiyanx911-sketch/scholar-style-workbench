@@ -85,6 +85,8 @@ const zhangStyleHints = {
 
 const zhangProseFrames = ["现代学术", "思想史", "历史条件", "义理", "经史之学", "现代转型", "价值系统", "内在理路"];
 
+const genericProseFrames = ["问题域", "概念关系", "材料线索", "历史条件", "解释边界", "论证层次", "思想位置", "文本脉络"];
+
 const broadCitationTerms = new Set([
   "哲学",
   "主体",
@@ -343,6 +345,8 @@ async function copyText(text) {
 function render() {
   renderProfileList();
   renderActiveTitle();
+  renderBuildState();
+  renderSelectedFiles();
   renderRulebook();
   renderSourcesView();
   renderAiSettings();
@@ -378,6 +382,13 @@ function renderActiveTitle() {
   qs("#activeProfileTitle").textContent = activeProfile().name;
 }
 
+function renderBuildState() {
+  const profile = activeProfile();
+  const nameInput = qs("#profileNameInput");
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = profile.name;
+  if (qs("#analysisPreview")) renderAnalysisPreview(profile);
+}
+
 function renderRulebook() {
   qs("#rulebookView").textContent = profileToMarkdown(activeProfile());
 }
@@ -388,6 +399,52 @@ function renderAiSettings() {
   qs("#modelSelect").value = aiSettings.model || "gpt-5.5";
   qs("#reasoningSelect").value = aiSettings.reasoning || "medium";
   qs("#rememberKeyToggle").checked = Boolean(aiSettings.rememberKey);
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "未知大小";
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function fileIdentity(file) {
+  return `${file.name}::${file.size}::${file.lastModified}`;
+}
+
+function mergeSelectedFiles(files) {
+  const seen = new Set(selectedCorpusFiles.map(fileIdentity));
+  Array.from(files || []).forEach((file) => {
+    const key = fileIdentity(file);
+    if (!seen.has(key)) {
+      selectedCorpusFiles.push(file);
+      seen.add(key);
+    }
+  });
+}
+
+function renderSelectedFiles(statusOverride = "") {
+  const status = qs("#fileStatus");
+  const list = qs("#selectedFilesList");
+  if (!status || !list) return;
+  const count = selectedCorpusFiles.length;
+  status.textContent = statusOverride || (count ? `已选择 ${count} 个文件。` : "尚未选择文件。");
+  list.innerHTML = selectedCorpusFiles.map((file, index) => `
+    <div class="selected-file-item">
+      <span class="selected-file-info">
+        <span class="selected-file-name">${escapeHtml(file.name)}</span>
+        <span class="selected-file-meta">${formatFileSize(file.size)}</span>
+      </span>
+      <button class="selected-file-remove" type="button" data-file-index="${index}" title="删除这个文件" aria-label="删除 ${escapeHtml(file.name)}">×</button>
+    </div>
+  `).join("");
+  qsa(".selected-file-remove").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.fileIndex);
+      selectedCorpusFiles.splice(index, 1);
+      qs("#corpusFilesInput").value = "";
+      renderSelectedFiles();
+    });
+  });
 }
 
 function escapeHtml(text) {
@@ -700,6 +757,7 @@ function normalizeTerm(term) {
 function isContentTerm(term) {
   const clean = normalizeTerm(term);
   if (clean.length < 2 || clean.length > 8) return false;
+  if (/^(.)\1{2,}$/.test(clean) || /(.)\1{3,}/.test(clean)) return false;
   if (markerStopWords.has(clean)) return false;
   if (/[的了一是在和与及并而则其这那之以于把被所]/.test(clean.slice(0, 1))) return false;
   if (/[的了和与及并而则其这那之以于把被所]/.test(clean.slice(-1))) return false;
@@ -832,6 +890,57 @@ async function readSelectedFiles(files) {
   }
   const withIds = assignSourceIds(docs);
   return { text: withIds.map((doc) => `[[${doc.id} ${doc.title}]]\n${doc.text}`).join("\n\n"), docs: withIds, errors };
+}
+
+function inferMarkdownTitle(text) {
+  const heading = text.match(/^\s{0,3}#{1,6}\s+(.+)$/m);
+  if (heading) return compactClause(cleanMarkdownInline(heading[1]), 36) || "粘贴 Markdown 语料";
+  return "粘贴 Markdown 语料";
+}
+
+function cleanMarkdownInline(text) {
+  return String(text)
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_~]/g, "")
+    .replace(/<[^>]+>/g, "")
+    .trim();
+}
+
+function cleanMarkdownText(text) {
+  return String(text)
+    .replace(/\r\n?/g, "\n")
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[^\n]*\n?|```/g, ""))
+    .replace(/^\s{0,3}#{1,6}\s+(.+)$/gm, (_, heading) => `\n${cleanMarkdownInline(heading)}\n`)
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/^\s*\|(.+)\|\s*$/gm, (_, row) => row.split("|").map((cell) => cleanMarkdownInline(cell)).filter(Boolean).join("；"))
+    .replace(/^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/gm, "")
+    .split("\n")
+    .map((line) => cleanMarkdownInline(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parsePastedCorpus(text, format) {
+  if (format === "markdown") {
+    return {
+      title: inferMarkdownTitle(text),
+      type: "md-paste",
+      pages: null,
+      text: cleanMarkdownText(text),
+      pageTexts: null,
+    };
+  }
+  return {
+    title: "粘贴语料",
+    type: "paste",
+    pages: null,
+    text,
+    pageTexts: null,
+  };
 }
 
 function renderAnalysisPreview(profile) {
@@ -1133,8 +1242,8 @@ function pickProfileTerms(profile, idea, count = 8) {
   const hits = lexicon.filter((term) => idea.includes(term));
   const fallback = isZhangProfile(profile)
     ? uniqueItems([...ideaTerms, ...zhangStyleHints.framing, ...hits, ...lexicon, ...zhangStyleHints.verbs])
-    : uniqueItems([...ideaTerms, ...hits, ...lexicon, ...zhangStyleHints.framing, ...zhangStyleHints.verbs]);
-  return fallback.filter(Boolean).slice(0, count);
+    : uniqueItems([...ideaTerms, ...hits, ...lexicon, ...profileMoveItems(profile), ...genericProseFrames]);
+  return fallback.filter((item) => item && isContentTerm(item)).slice(0, count);
 }
 
 function profileStyleLexicon(profile) {
@@ -1143,12 +1252,21 @@ function profileStyleLexicon(profile) {
     : (profile.lexicon || []);
 }
 
+function profileMoveItems(profile) {
+  const model = profile.paragraphModel || {};
+  return [
+    ...(model.openingMoves || []),
+    ...(model.middleMoves || []),
+    ...(model.closingMoves || []),
+  ].map((entry) => entry.item).filter(Boolean);
+}
+
 function pickFrameTerms(profile, idea) {
   const lexiconHits = (profile.lexicon || []).filter((term) => idea.includes(term));
   const pool = isZhangProfile(profile)
     ? uniqueItems([...zhangProseFrames, ...lexiconHits, ...(profile.lexicon || []), ...zhangStyleHints.framing])
-    : uniqueItems([...lexiconHits, ...(profile.lexicon || []), ...zhangStyleHints.framing]);
-  return pool.slice(0, 5);
+    : uniqueItems([...lexiconHits, ...(profile.lexicon || []), ...profileMoveItems(profile), ...genericProseFrames]);
+  return pool.filter((item) => item && isContentTerm(item)).slice(0, 5);
 }
 
 function uniqueCitationRefs(citations, limit = 3) {
@@ -1221,6 +1339,74 @@ function buildAuditSuggestions(audit) {
   return suggestions.length ? suggestions : ["风格结构基本通过；下一步主要补充文献证据和更具体的问题域。"];
 }
 
+function scoreSentenceRhythm(profile, stats) {
+  const target = profile.stats?.avgSentenceLength || 30;
+  const distance = Math.abs((stats.mean || 0) - target);
+  if (distance <= 8) return 12;
+  if (distance <= 16) return 9;
+  if (stats.mean >= 24) return 7;
+  if (stats.mean >= 18) return 4;
+  return 2;
+}
+
+function markerHits(profile, key, text, fallback = []) {
+  const pool = uniqueItems([...(profile.markers?.[key] || []), ...fallback]).filter(Boolean);
+  return pool.filter((item) => text.includes(item));
+}
+
+function styleAudit(profile, text) {
+  const sentences = splitSentences(text);
+  const stats = sentenceStats(sentences);
+  const isZhang = isZhangProfile(profile);
+  const contrastHits = markerHits(profile, "contrast", text, isZhang ? zhangStyleHints.relation : markerSets.contrast.slice(0, 6));
+  const causalHits = markerHits(profile, "causal", text, markerSets.causal.slice(0, 5));
+  const reformulationHits = markerHits(profile, "reformulation", text, isZhang ? zhangStyleHints.relation : ["也就是说", "换言之", "在此意义上", "严格说来"]);
+  const lexiconPool = profileStyleLexicon(profile).filter((item) => item && isContentTerm(item));
+  const lexiconHits = uniqueItems(lexiconPool.filter((item) => text.includes(item)));
+  const frameHits = uniqueItems(pickFrameTerms(profile, text).filter((item) => text.includes(item)));
+  const hasProblemFrame = /问题域|问题性|如何理解|意味着|关乎|历史条件|文本脉络|材料线索|解释边界|在此意义上|理论重心/.test(text);
+  const hasBoundedClaim = /在某种意义上|可能|或许|似乎|并不能简单地|大致可以说|暂时只能|仍需|还需要|可以说/.test(text);
+  const hasProfileStructure = profileMoveItems(profile).some((item) => text.includes(item)) || /开端|中段|结尾|段落|论证|铺陈|推进/.test(text);
+  const generic = antiGenericAudit(text);
+  let score = 0;
+  score += Math.min(18, contrastHits.length * 5);
+  score += Math.min(12, causalHits.length * 4);
+  score += Math.min(14, reformulationHits.length * 5);
+  score += Math.min(30, lexiconHits.length * 5);
+  score += Math.min(10, frameHits.length * 3);
+  score += hasProblemFrame ? 8 : 0;
+  score += hasBoundedClaim ? 8 : 0;
+  score += hasProfileStructure ? 8 : 0;
+  score += scoreSentenceRhythm(profile, stats);
+  score = Math.max(0, Math.min(100, Math.round(score - generic.penalty)));
+  return {
+    score,
+    stats,
+    contrastHits,
+    causalHits,
+    reformulationHits,
+    lexiconHits,
+    frameHits,
+    hasProblemFrame,
+    hasBoundedClaim,
+    hasProfileStructure,
+    generic,
+    suggestions: buildAuditSuggestions({ contrastHits, causalHits, reformulationHits, lexiconHits, frameHits, hasProblemFrame, hasBoundedClaim, hasProfileStructure, stats, generic }),
+  };
+}
+
+function buildAuditSuggestions(audit) {
+  const suggestions = [];
+  if (!audit.hasProblemFrame) suggestions.push("开头先建立具体问题域，不要直接把原句润色成结论。");
+  if (!audit.contrastHits.length) suggestions.push("补入当前 profile 常用的转折或辨析连接词。");
+  if (!audit.reformulationHits.length) suggestions.push("加入重述推进，把概念关系再转一层。");
+  if (audit.lexiconHits.length < 5) suggestions.push("增加当前 profile 的独有概念词，避免两个作者写成同一种口吻。");
+  if (!audit.hasProfileStructure) suggestions.push("把当前 profile 的段落动作写进文本，比如历史定位、文献引入、概念展开或关系澄清。");
+  if (!audit.hasBoundedClaim) suggestions.push("结尾用有限判断收束，保留可核验范围。");
+  if (audit.generic.hits.length) suggestions.push(`删除通用 AI 腔：${audit.generic.hits.join("、")}。`);
+  return suggestions.length ? suggestions : ["规则命中度较高；下一步主要补充具体文献、页码和原文证据。"];
+}
+
 function buildCodexStyleDraft(profile, idea, mode) {
   const cleanIdea = idea.trim().replace(/\s+/g, " ");
   const argument = extractArgument(cleanIdea);
@@ -1256,6 +1442,88 @@ function buildCodexStyleDraft(profile, idea, mode) {
     citations,
     draft: `${intro}${middle}${close}`,
   };
+}
+
+function dominantMove(profile, key, fallback) {
+  return profile.paragraphModel?.[key]?.[0]?.item || fallback;
+}
+
+function firstMarker(profile, key, fallback) {
+  return profile.markers?.[key]?.find(Boolean) || fallback;
+}
+
+function citationSourceClause(citations, refs) {
+  return citations.length
+    ? `从已建档材料看，${refs.join("、")} 可以作为进一步核验的文本入口；`
+    : "在尚未补入更具体文献之前，这一判断只能作为问题意识的初步展开；";
+}
+
+function buildZhangDraft(context) {
+  const { cleanIdea, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const termA = focusTerms[0] || terms[0] || "问题意识";
+  const termB = focusTerms[1] || terms[1] || "价值系统";
+  const termC = frameTerms[0] || terms[2] || "历史条件";
+  const termD = frameTerms[1] || terms[3] || "主体";
+  const termE = frameTerms[2] || "思想史";
+  const rejected = contrast?.rejected || `把${termA}还原为单一来源`;
+  const affirmed = contrast?.affirmed || `${termA}在${termC}中的重新组织`;
+  const sourceClause = citationSourceClause(citations, refs);
+  const voicePrefix = mode === "lecture" ? "在我看来，" : "";
+  const intro =
+    mode === "intro"
+      ? `要把${topic}处理为一个真正的学术问题，首先不能从一个已经完成的判断开始，而要追问它是在怎样的${termC}中被提出、又在怎样的${termB}中获得其问题性的。`
+      : `${voicePrefix}要理解${topic}，不能只把它看作一个可以直接下判断的对象。它之所以成为问题，正在于它牵涉${termA}如何在${termC}、${termD}与${termE}之间获得重新配置。`;
+  const middle =
+    `如果说通常的表述容易把这一问题理解为${rejected}，那么更需要辨明的是，${affirmed}才显示出它的理论重心。也就是说，${termA}在这里并非一个孤立的义理来源，而是在${termB}、${termC}与${termD}之间发生重新联结的枢纽；${subject}所完成的，也不是把某种外来的概念简单移入中国思想，而是在既有知识传统、现实危机和新的解释需求之间，重新安排可以被论证的思想关系。`;
+  const close =
+    `${sourceClause}正是在此意义上，这一论述的重心并不在于给出一个外在的价值判断，而在于通过“并非……而是……”的区分，把原先较为平面的说法转化为一个关于${uniqueItems([subject, termA, termB, termC]).join("、") || "概念关系"}的有限解释。暂时只能说，这一解释为后续论证开出了方向，但它还需要回到具体文本，进一步标明其历史位置、概念边界和可成立的范围。`;
+  return { argument, citations, draft: `${intro}${middle}${close}` };
+}
+
+function buildProfileDraft(profile, context) {
+  const { argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode } = context;
+  const openingMove = dominantMove(profile, "openingMoves", "问题域铺陈");
+  const middleMove = dominantMove(profile, "middleMoves", "关系澄清");
+  const closingMove = dominantMove(profile, "closingMoves", "有限判断");
+  const contrastMarker = firstMarker(profile, "contrast", "但是");
+  const causalMarker = firstMarker(profile, "causal", "因此");
+  const reformMarker = firstMarker(profile, "reformulation", "换言之");
+  const hedgeMarker = firstMarker(profile, "hedge", "大致可以说");
+  const termA = focusTerms[0] || terms[0] || frameTerms[0] || "问题意识";
+  const termB = focusTerms[1] || terms[1] || frameTerms[1] || "解释线索";
+  const termC = frameTerms[0] || terms[2] || "文本脉络";
+  const termD = frameTerms[1] || terms[3] || "思想位置";
+  const rejected = contrast?.rejected || `把${termA}处理成现成结论`;
+  const affirmed = contrast?.affirmed || `从${termC}中重新说明${termA}与${termB}的关系`;
+  const sourceClause = citationSourceClause(citations, refs);
+  const anchorTerms = uniqueItems([subject, termA, termB, termC, termD, ...frameTerms]).slice(0, 6).join("、");
+  const lead =
+    openingMove.includes("历史")
+      ? `若把${topic}放回${termC}的展开过程之中，问题的重心就不只是判断${subject}“是什么”，而是说明${termA}如何在特定历史位置上被重新组织。`
+      : openingMove.includes("文献")
+        ? `从材料线索进入${topic}，先要把${subject}、${termA}与${termB}之间的文本关系交代清楚，而不是先给出一个抽象判断。`
+        : `所谓${topic}，并不是一个可以直接套用定义的对象；它更像是围绕${anchorTerms || termA}展开的问题域。`;
+  const intro = mode === "lecture" ? `在我看来，${lead}` : lead;
+  const middle =
+    `若依照“${openingMove}—${middleMove}”的推进方式，这里需要先承认一般说法的有效范围，${contrastMarker}不能停留在${rejected}这一层。更关键的是，${affirmed}，这使${termA}不再只是一个名词，而成为连接${termB}、${termC}与${termD}的论证枢纽。${reformMarker}，真正需要展开的是这些概念在文本、历史处境和解释需求之间怎样相互牵动，${causalMarker}才能避免把这一问题化约为单一的解释套路。`;
+  const close =
+    `${sourceClause}从“${closingMove}”的收束方式看，${hedgeMarker}，这段论述目前能够成立的只是一个有边界的解释：它把${anchorTerms || termA}重新放进同一组关系中，而不是把它们处理为彼此孤立的标签。后续若要进入正式论文，还需要把关键判断逐条回到原文和页码中核验。`;
+  return { argument, citations, draft: `${intro}${middle}${close}` };
+}
+
+function buildCodexStyleDraft(profile, idea, mode) {
+  const cleanIdea = idea.trim().replace(/\s+/g, " ");
+  const argument = extractArgument(cleanIdea);
+  const terms = pickProfileTerms(profile, cleanIdea, 10);
+  const frameTerms = pickFrameTerms(profile, cleanIdea);
+  const subject = cleanIdea.match(/(章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|周展安|张志强)/)?.[0] || terms[0] || "主体";
+  const focusTerms = terms.filter((term) => term !== subject && !term.includes(subject)).slice(0, 5);
+  const citations = findCitationMatches(profile, cleanIdea, 6);
+  const refs = uniqueCitationRefs(citations, 3);
+  const topic = buildProblemTopic(argument, terms);
+  const contrast = extractContrastFrame(cleanIdea);
+  const context = { cleanIdea, argument, terms, frameTerms, subject, focusTerms, citations, refs, topic, contrast, mode };
+  return isZhangProfile(profile) ? buildZhangDraft(context) : buildProfileDraft(profile, context);
 }
 
 function localDraft(profile, idea, mode) {
@@ -1306,6 +1574,8 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 4. 如需标注出处，只能使用“可引用材料”中的编号，不要虚构页码、篇名或观点。
 5. 不要输出普通 ChatGPT 式平滑总结，尤其避免“首先/其次/最后”“综上所述”“值得我们思考”“影响深远”“具有重要意义”等套话。
 6. 输出后必须做风格自检，并列出需要核验的事实。
+7. 必须优先使用当前 profile 的独有概念词、连接词、段落动作和句长节奏；不要把不同作者都写成“要理解……不能只……”这一套模板。
+8. 如果当前 profile 不是张志强，不得自动套入张志强的“现代学术/思想史/义理”框架，除非我的原文或 profile 明确出现这些词。
 
 目标体裁：${mode}
 生成规模：${longformMode}
@@ -1461,48 +1731,43 @@ function bindEvents() {
 
   qs("#newProfileButton").addEventListener("click", () => {
     qs("#profileNameInput").value = "新学者";
+    qs("#analysisPreview").innerHTML = `<p class="empty-state">正在创建新档案。导入语料后，这里会显示新的句长、连接词、概念词和论证结构信号。</p>`;
     qs("#corpusTextInput").focus();
     qsa(".tab-button").find((button) => button.dataset.tab === "build").click();
   });
 
   qs("#corpusFilesInput").addEventListener("change", (event) => {
-    selectedCorpusFiles = Array.from(event.target.files || []);
-    qs("#fileStatus").textContent = selectedCorpusFiles.length ? `已选择 ${selectedCorpusFiles.length} 个文件。` : "尚未选择文件。";
+    mergeSelectedFiles(event.target.files || []);
+    event.target.value = "";
+    renderSelectedFiles();
   });
 
   qs("#clearCorpusButton").addEventListener("click", () => {
     qs("#corpusTextInput").value = "";
     qs("#corpusFilesInput").value = "";
     selectedCorpusFiles = [];
-    qs("#fileStatus").textContent = "尚未选择文件。";
+    renderSelectedFiles();
   });
 
   qs("#analyzeCorpusButton").addEventListener("click", async () => {
     const name = qs("#profileNameInput").value.trim() || "新学者";
     const pasted = qs("#corpusTextInput").value.trim();
+    const pasteFormat = qs("#pasteFormatSelect").value;
     qs("#analyzeCorpusButton").disabled = true;
-    qs("#fileStatus").textContent = "正在读取语料...";
+    renderSelectedFiles("正在读取语料...");
     const fileResult = await readSelectedFiles(selectedCorpusFiles);
     const sourceDocs = assignSourceIds([
-      ...(pasted
-        ? [{
-            title: "粘贴语料",
-            type: "paste",
-            pages: null,
-            text: pasted,
-            pageTexts: null,
-          }]
-        : []),
+      ...(pasted ? [parsePastedCorpus(pasted, pasteFormat)] : []),
       ...(fileResult.docs || []),
     ]);
     const combined = sourceDocs.map((doc) => `[[${doc.id} ${doc.title}]]\n${doc.text}`).join("\n\n");
     if (!combined.trim()) {
       showToast("请先导入或粘贴语料。");
       qs("#analyzeCorpusButton").disabled = false;
-      qs("#fileStatus").textContent = "尚未选择文件。";
+      renderSelectedFiles();
       return;
     }
-    qs("#fileStatus").textContent = "正在生成 profile...";
+    renderSelectedFiles("正在生成 profile...");
     const documentCount = Math.max(1, sourceDocs.length);
     const profile = analyzeText(combined, name, documentCount, sourceDocs);
     profiles = [profile, ...profiles.filter((item) => item.id !== profile.id)];
@@ -1511,7 +1776,7 @@ function bindEvents() {
     render();
     renderAnalysisPreview(profile);
     qs("#analyzeCorpusButton").disabled = false;
-    qs("#fileStatus").textContent = selectedCorpusFiles.length ? `已读取 ${selectedCorpusFiles.length} 个文件。` : "尚未选择文件。";
+    renderSelectedFiles(selectedCorpusFiles.length ? `已读取 ${selectedCorpusFiles.length} 个文件。` : "");
     showToast(fileResult.errors.length ? `已生成；${fileResult.errors.length} 个文件失败` : "Profile 已生成。");
   });
 

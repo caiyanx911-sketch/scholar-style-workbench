@@ -466,6 +466,21 @@ h1 {
   min-width: 0;
 }
 
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-row .field-label {
+  margin: 0;
+}
+
+.field-row .compact-select {
+  max-width: 180px;
+}
+
 .check-row {
   display: inline-flex;
   align-items: center;
@@ -513,6 +528,54 @@ h1 {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.selected-files-list {
+  display: grid;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.selected-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 9px 8px 11px;
+  border: 1px solid rgba(159, 23, 56, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.9);
+}
+
+.selected-file-info {
+  min-width: 0;
+}
+
+.selected-file-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.selected-file-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.selected-file-remove {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .large-textarea {
