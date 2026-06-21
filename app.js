@@ -1300,9 +1300,9 @@ ${formatBriefList(profile.lexicon, 12)}
 推荐使用流程
 1. 在左侧选择这个档案。
 2. 打开“改写”，粘贴自己的原始观点或段落。
-3. 点击“Codex 风格重构”，先得到本地改写稿。
-4. 如果填写了 API Key，可以再点击“调用模型生成长文”。
-5. 打开“诊断”，把生成结果贴进去，看它是否接近当前档案。
+3. 点击“生成语义锁定包”，先固定原文判断、证据和待核验边界。
+4. 填写 API Key 后点击“调用模型严格改写”，让模型按当前 profile 做风格迁移。
+5. 查看输出末尾的“本地保真复核”，确认没有漏掉关键材料或新增可疑概念。
 6. 打开“文献”，核对建议出处是否真的支持你的论断。
 
 给使用者的提醒
@@ -1473,6 +1473,95 @@ function buildIdeaEvidencePack(text) {
     uncertainty,
     chunkSummaries,
   };
+}
+
+function sourceLockTerms(text, profile = null, limit = 36) {
+  const quoted = Array.from(text.matchAll(/[《“"]([^》”"]{2,24})[》”"]/g)).map((match) => match[1]);
+  const explicit = Array.from(text.matchAll(/(?:章太炎|康有为|欧阳竟无|王阳明|熊十力|梁启超|严复|周展安|张志强|佛教|佛学|唯识学|今文经学|理学|庄学|儒学|西学|西方进化论|社会达尔文主义|俱分进化论|现代性|现代化|近代科学|阿赖耶识|八识|三籁|乾坤|真如|真如本体|良知|齐物论|国故论衡|建立宗教论|出世性|清末民初|晚清|太炎|乾|坤|不住生死|不住涅槃)/g)).map((match) => match[0]);
+  const conceptual = Array.from(text.matchAll(/[\u4e00-\u9fffA-Za-z0-9·]{2,18}(?:思想|义理|危机|进化论|齐物论|经世|问题|资源|处境|转型|现代性|佛教|儒学|庄学|西学|佛学|唯识学|阿赖耶识|本体论|主体|传统|学术|谱系|文本|文献|关系|论证|结构|解释|近代|现代|政治|哲学)/g)).map((match) => match[0].replace(/^的/, ""));
+  const profileHits = profile ? (profile.lexicon || []).filter((term) => text.includes(term)) : [];
+  const synthetic = [];
+  if (/乾/.test(text) && /坤/.test(text)) synthetic.push("乾坤");
+  return uniqueItems([...explicit, ...quoted, ...synthetic, ...conceptual, ...profileHits])
+    .filter((term) => term && isContentTerm(term))
+    .filter((term) => !/^(思想|关系|问题|价值|主体|传统|现代|佛教|学术|文本|文献|解释|结构|论证)$/.test(term))
+    .slice(0, limit);
+}
+
+function buildSemanticLock(text, profile, mode = "article", longformMode = "1200") {
+  const clean = normalizeIdeaText(text);
+  const units = buildRewriteUnits(clean, rewriteUnitLimit(mode, longformMode));
+  const pack = buildIdeaEvidencePack(clean);
+  const argument = extractArgument(clean.replace(/\s+/g, " "));
+  const globalTerms = sourceLockTerms(clean, profile, 36);
+  const chunks = units.map((unit, index) => {
+    const arg = extractArgument(unit);
+    const terms = sourceLockTerms(unit, profile, 12);
+    return {
+      id: `C${index + 1}`,
+      role: classifySourceUnit(unit, index, units.length),
+      claim: clipText(arg.thesis || arg.problem || unit, 180),
+      evidence: arg.evidence.map((item) => clipText(item, 150)).slice(0, 3),
+      uncertainty: arg.uncertainty.map((item) => clipText(item, 150)).slice(0, 2),
+      terms,
+    };
+  });
+  return {
+    chars: clean.length,
+    sentences: splitSentences(clean).length,
+    globalClaim: clipText(argument.thesis, 180),
+    globalProblem: clipText(argument.problem, 180),
+    requiredTerms: globalTerms,
+    claims: pack.claims,
+    evidence: pack.evidence,
+    uncertainty: pack.uncertainty,
+    chunks,
+  };
+}
+
+function formatSemanticLockMarkdown(lock) {
+  return `## 本地语义锁定包
+
+> 这不是正式改写稿。它只负责锁定原文事实、判断、证据和待核验边界；正式风格迁移请使用“调用模型严格改写”。
+
+- 输入规模: ${lock.chars} 字符；${lock.sentences} 个句子；${lock.chunks.length} 个材料块。
+- 核心问题: ${lock.globalProblem}
+- 核心判断: ${lock.globalClaim}
+- 必须保留的关键词/专名: ${lock.requiredTerms.join("、") || "未抽取到稳定专名"}
+
+### 分块语义
+${lock.chunks.map((chunk) => `- [${chunk.id}] ${chunk.role}｜判断：${chunk.claim}｜关键词：${chunk.terms.join("、") || "无"}`).join("\n")}
+
+### 证据边界
+${numberedLines(lock.evidence, "E", "原文没有明显证据句；改写时只能保留为观点，不得补成事实。")}
+
+### 待核验项
+${numberedLines(lock.uncertainty, "U", "原文没有显式不确定句；超出原文的事实判断仍需核验。", 8)}
+
+## 下一步
+- 点击“调用模型严格改写”，让大模型在这个语义锁定包内进行学者风格迁移。
+- 本地不会再直接生成正式改写稿，因为规则拼装容易造成内容漂移。`;
+}
+
+function formatSemanticLockForPrompt(lock) {
+  return `【语义锁定包：必须逐条保留，不得改写成相反或更强判断】
+输入规模：${lock.chars} 字符；${lock.sentences} 个句子；${lock.chunks.length} 个材料块。
+核心问题：${lock.globalProblem}
+核心判断：${lock.globalClaim}
+必须保留的关键词/专名：${lock.requiredTerms.join("、") || "未抽取到稳定专名"}
+
+分块语义：
+${lock.chunks.map((chunk) => `[${chunk.id}] ${chunk.role}
+- 原文判断：${chunk.claim}
+- 必保关键词：${chunk.terms.join("、") || "无"}
+- 证据句：${chunk.evidence.join("；") || "无显式证据句"}
+- 不确定/待核验：${chunk.uncertainty.join("；") || "无显式不确定句"}`).join("\n\n")}
+
+证据边界：
+${numberedLines(lock.evidence, "E", "无明显证据句；不得补写成事实。")}
+
+待核验：
+${numberedLines(lock.uncertainty, "U", "无显式不确定句；超出原文的事实判断都要标为仍需核验。", 8)}`;
 }
 
 function normalizeIdeaText(text) {
@@ -1919,6 +2008,81 @@ function styleAudit(profile, text) {
   };
 }
 
+function contentIntegrityAudit(sourceText, outputText, profile = null) {
+  const source = normalizeIdeaText(sourceText);
+  const output = normalizeIdeaText(outputText);
+  const lock = buildSemanticLock(source, profile || activeProfile());
+  const requiredTerms = lock.requiredTerms.filter((term) => term.length >= 2).slice(0, 28);
+  const hasTerm = (text, term) => {
+    if (term === "乾坤") return text.includes("乾坤") || (text.includes("乾") && text.includes("坤"));
+    return text.includes(term);
+  };
+  const missingTerms = requiredTerms.filter((term) => !hasTerm(output, term));
+  const sourceTerms = new Set(sourceLockTerms(source, profile || activeProfile(), 60));
+  const styleTerms = new Set([
+    ...profileStyleLexicon(profile || activeProfile()).slice(0, 80),
+    ...genericProseFrames,
+    ...zhangProseFrames,
+    "问题域",
+    "解释位置",
+    "概念边界",
+    "关系",
+    "论证",
+    "文本",
+    "文献",
+    "学术",
+  ]);
+  const outputTerms = sourceLockTerms(output, profile || activeProfile(), 60);
+  const riskyAdditions = outputTerms
+    .filter((term) => !sourceTerms.has(term) && !styleTerms.has(term))
+    .filter((term) => !/^(问题|关系|解释|文本|文献|思想|学术|传统|现代|主体|价值|结构|论证)$/.test(term))
+    .slice(0, 12);
+  const chunkCoverage = lock.chunks.map((chunk) => {
+    const terms = chunk.terms.filter((term) => term.length >= 2).slice(0, 8);
+    const missing = terms.filter((term) => !hasTerm(output, term));
+    return {
+      id: chunk.id,
+      ok: !missing.length,
+      missing,
+    };
+  });
+  const coveredChunks = chunkCoverage.filter((chunk) => chunk.ok).length;
+  const termScore = requiredTerms.length ? Math.round(((requiredTerms.length - missingTerms.length) / requiredTerms.length) * 100) : 100;
+  const chunkScore = chunkCoverage.length ? Math.round((coveredChunks / chunkCoverage.length) * 100) : 100;
+  const hallucinationPenalty = riskyAdditions.length ? Math.min(35, riskyAdditions.length * 5) : 0;
+  const score = Math.max(0, Math.min(100, Math.round((termScore * 0.55) + (chunkScore * 0.45) - hallucinationPenalty)));
+  return {
+    score,
+    status: score >= 90 && !riskyAdditions.length ? "通过" : score >= 75 ? "需人工复核" : "不建议使用",
+    requiredTerms,
+    missingTerms,
+    riskyAdditions,
+    chunkCoverage,
+    termScore,
+    chunkScore,
+  };
+}
+
+function formatIntegrityAuditMarkdown(audit) {
+  const missing = audit.missingTerms.length ? audit.missingTerms.join("、") : "无";
+  const risky = audit.riskyAdditions.length ? audit.riskyAdditions.join("、") : "无";
+  const chunkWarnings = audit.chunkCoverage
+    .filter((chunk) => !chunk.ok)
+    .map((chunk) => `- ${chunk.id} 缺少：${chunk.missing.join("、")}`)
+    .join("\n") || "- 分块关键词覆盖通过。";
+  return `## 本地保真复核
+
+- 结论: ${audit.status}
+- 内容保真分: ${audit.score}/100
+- 必保关键词缺失: ${missing}
+- 疑似新增专名/概念: ${risky}
+
+### 分块覆盖
+${chunkWarnings}
+
+> 如果这里显示“不建议使用”或出现疑似新增专名，不要直接采用正文；应回到原文补证据或重新生成。`;
+}
+
 function buildAuditSuggestions(audit) {
   const suggestions = [];
   if (!audit.hasProblemFrame) suggestions.push("开头先建立具体问题域，不要直接把原句润色成结论。");
@@ -2262,33 +2426,19 @@ function buildCodexStyleDraft(profile, idea, mode, longformMode = "1200") {
 function localDraft(profile, idea, mode, longformMode = "1200") {
   const cleanIdea = normalizeIdeaText(idea);
   if (!cleanIdea) return "请先输入你的观点。";
-  const result = buildCodexStyleDraft(profile, cleanIdea, mode, longformMode);
-  const audit = styleAudit(profile, result.draft);
-  const units = result.units || [];
-  const sourceNotes = result.citations.length
-    ? result.citations.slice(0, 5).map((entry) => `- ${formatCitationRef(entry)} ${entry.sourceTitle}：${entry.excerpt}`).join("\n")
-    : "- 暂无候选出处；请先在“建模”页导入目标学者或主题文献。";
-  const citationOverflow = result.citations.length > 5 ? `\n- 另有 ${result.citations.length - 5} 条候选出处，正式定稿前请在“文献”页逐条核验。` : "";
-  return `## 风格化改写稿
+  const lock = buildSemanticLock(cleanIdea, profile, mode, longformMode);
+  return `${formatSemanticLockMarkdown(lock)}
 
-${result.draft}
+## 当前 profile 的风格规律
+- 词汇层: ${(profileStyleLogic(profile).lexical.signatureConcepts || []).slice(0, 10).join("、") || "未形成稳定概念词"}。
+- 句子层: ${profileStyleLogic(profile).sentence.rhythm}
+- 段落层: 开头多为“${profileStyleLogic(profile).paragraph.opening}”，中段多为“${profileStyleLogic(profile).paragraph.middle}”，收束多为“${profileStyleLogic(profile).paragraph.closing}”。
+- 论证层: ${profileStyleLogic(profile).argument.problemFraming}
 
-## Codex 风格自检
-- 风格贴近度: ${audit.score}/100
-- 内容覆盖: 已按全文分为 ${units.length || 1} 个材料块，生成时逐块改写，不只处理第一句。
-- 平均句长: ${audit.stats.mean}
-- 命中转折: ${audit.contrastHits.join("、") || "无"}
-- 命中重述: ${audit.reformulationHits.join("、") || "无"}
-- 命中概念词: ${audit.lexiconHits.slice(0, 10).join("、") || "无"}
-- 反 ChatGPT 腔: ${audit.generic.hits.length ? `需删除 ${audit.generic.hits.join("、")}` : "未命中常见平滑套话"}
-
-## 出处核验
-${sourceNotes}${citationOverflow}
-
-## 需要你确认的地方
-- 这段改写没有冒充作者，也没有复制来源原文。
-- 本地重构只使用你的原始观点和当前 profile 的风格规则；凡未在原文或引用索引中出现的事实，都应视为仍需核验。
-- 如果要进入正式论文写作，需要补充具体文献、页码和原文证据。`;
+## 使用方式
+- 如果只是检查原文有没有被完整吸收，看上面的“分块语义”和“必保关键词”。
+- 如果要正式改写，点击“调用模型严格改写”。
+- 如果要复制到 ChatGPT/Claude/Codex，点击“生成严格 Prompt”。`;
 }
 
 function blendHeader(blended) {
@@ -2312,12 +2462,12 @@ ${localDraft(blended, cleanIdea, mode, longformMode)}`;
 
 function aiPrompt(profile, idea, mode, longformMode = "1200") {
   const citations = findCitationMatches(profile, idea, 10);
-  const pack = buildIdeaEvidencePack(idea);
   const normalizedIdea = normalizeIdeaText(idea);
   const units = buildRewriteUnits(normalizedIdea, rewriteUnitLimit(mode, longformMode));
+  const lock = buildSemanticLock(normalizedIdea, profile, mode, longformMode);
   const styleLogic = profileStyleLogic(profile);
   const sourceLogic = analyzeSourceLogic(profile, normalizedIdea, units);
-  return `你不是普通润色器。你要作为“文本特征分析器 + 学术风格转换器”工作，依据以下“${profile.name}”风格 profile，把我的观点改写为风格化学术文本。
+  return `你不是普通润色器。你要作为“语义保真器 + 学者文本风格迁移器”工作，依据以下“${profile.name}”风格 profile，把我的观点改写为风格化学术文本。
 
 重要边界：
 1. 不要冒充该学者本人。
@@ -2329,22 +2479,23 @@ function aiPrompt(profile, idea, mode, longformMode = "1200") {
 7. 必须优先使用当前 profile 的独有概念词、连接词、段落动作和句长节奏；不要把不同作者都写成“要理解……不能只……”这一套模板。
 8. 如果当前 profile 不是张志强，不得自动套入张志强的“现代学术/思想史/义理”框架，除非我的原文或 profile 明确出现这些词。
 9. 原始观点无字数上限；必须先完整吸收，再分块改写。不得因为原文很长而只处理开头或结尾。
-10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“原始观点吸收包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
-11. 必须先做底层理解，再写正文：先抽取当前 profile 的四层风格逻辑，再理解我的原文每一块在论证中的作用，最后才进行风格迁移。不要只改写第一句，不要跳过后半段。
+10. 严禁语言幻觉：任何事实、人物关系、文献判断、历史判断，必须能在“原始观点全文”“语义锁定包”“可引用材料”中找到依据。找不到依据时，写成“仍需进一步核验”，不要补写成确定事实。
+11. 必须先做底层理解，再写正文：先锁定原文每一块的判断、证据、必保关键词和不确定边界；再抽取当前 profile 的四层风格逻辑；最后才进行风格迁移。不要只改写第一句，不要跳过后半段。
 12. 开头必须多样化：可以用历史定位、材料引入、概念位置移动、问题拆解、文献脉络进入等方式，不得默认用“要理解X，不能只……”作为固定起手。
-13. “论点抽取 / 作者底层风格模型 / 原文论证理解 / 原始观点吸收包 / 全文覆盖检查”只允许作为内部分析步骤，禁止在最终回答中作为标题或正文输出。
+13. “论点抽取 / 作者底层风格模型 / 原文论证理解 / 语义锁定包 / 全文覆盖检查”只允许作为内部分析步骤，禁止在最终回答中作为标题或正文输出。
 14. 改写不是重新写一篇新文章：不得新增原文没有的事实关系、价值判断或文献判断；风格迁移只能改变论证组织和措辞节奏。
+15. 风格迁移的本质是模仿文本规律：概念如何排布、句子如何转折、段落如何推进、判断如何收束；不是套用几个固定句式。
 
 目标体裁：${mode}
 生成规模：${longformMode}
 
-内部参考材料：下面三组信息只用于你在心里完成理解与调度，最终回答不得出现这些标题，不得把分析过程暴露给用户。
+内部参考材料：下面信息只用于你在心里完成理解与调度，最终回答不得出现这些标题，不得把分析过程暴露给用户。
+
+${formatSemanticLockForPrompt(lock)}
 
 ${formatStyleLogicMarkdown(styleLogic)}
 
 ${formatSourceLogicMarkdown(sourceLogic)}
-
-${formatIdeaPackForPrompt(pack)}
 
 风格规则：
 ${profileToMarkdown(profile)}
@@ -2361,7 +2512,8 @@ ${idea.trim()}
 要求：
 - 开头先建立历史/思想/概念问题域，不要直接宣布结论。
 - 开头句式必须根据原文和 profile 变化，不要机械使用“要理解……不能只……”。
-- 必须覆盖原始观点全文的主要判断、证据、转折和结尾，不得只改第一句。
+- 必须逐块覆盖语义锁定包里的 [C1] [C2] [C3]...，不得只改第一句。
+- 语义锁定包里的“必保关键词/专名”必须尽量保留；如果为了文体需要替换，必须在简短核验里说明替换关系。
 - 风格化表达必须服务于原文内容；凡原文没有的事实，不要补写成确定判断。
 - 至少使用一次当前 profile 支持的概念区分或重述推进，但不要为了凑规则而硬塞固定句式。
 - 结尾给出有限判断，不要做空泛总结。
@@ -2399,7 +2551,7 @@ function buildLongformPrompt(profile, idea, mode, longformMode) {
 - 不要使用普通 AI 润色腔，如“首先/其次/最后”“综上所述”“影响深远”“值得我们思考”。
 - 对没有出处支撑的判断，用“仍需进一步核验”标出。
 - 如果原始观点很长，先按材料块重组论证，不要遗漏后半部分。
-- 不要输出论点抽取、作者底层风格模型、原文论证理解、原始观点吸收包、全文覆盖检查、材料使用表等后台分析内容。
+- 不要输出论点抽取、作者底层风格模型、原文论证理解、语义锁定包、全文覆盖检查、材料使用表等后台分析内容。
 - 简短核验只保留：内容是否覆盖全文、哪些事实需要补出处、是否避免固定模板。`;
 }
 
@@ -2439,6 +2591,15 @@ async function callOpenAIResponse(prompt) {
     throw new Error(message);
   }
   return extractResponseText(data) || JSON.stringify(data, null, 2);
+}
+
+async function generateStrictModelDraft(profile, idea, mode, longformMode = "1200") {
+  const prompt = buildLongformPrompt(profile, idea, mode, longformMode);
+  const draft = await callOpenAIResponse(prompt);
+  const audit = contentIntegrityAudit(idea, draft, profile);
+  return `${draft.trim()}
+
+${formatIntegrityAuditMarkdown(audit)}`;
 }
 
 function extractResponseText(data) {
@@ -2575,11 +2736,10 @@ function bindEvents() {
       return;
     }
     qs("#aiLongformButton").disabled = true;
-    qs("#aiStatus").textContent = "正在调用模型...";
+    qs("#aiStatus").textContent = "正在调用模型严格改写...";
     try {
-      const prompt = buildLongformPrompt(activeProfile(), idea, qs("#rewriteMode").value, qs("#longformMode").value);
-      qs("#rewriteOutput").value = await callOpenAIResponse(prompt);
-      qs("#aiStatus").textContent = "模型生成完成。";
+      qs("#rewriteOutput").value = await generateStrictModelDraft(activeProfile(), idea, qs("#rewriteMode").value, qs("#longformMode").value);
+      qs("#aiStatus").textContent = "模型生成完成，并已完成本地保真复核。";
     } catch (error) {
       qs("#aiStatus").textContent = `调用失败：${error.message}`;
       showToast("模型调用失败。");
@@ -2618,8 +2778,13 @@ function bindEvents() {
     qs("#blendStatus").textContent = "正在调用模型...";
     try {
       const prompt = buildBlendLongformPrompt(profileA, profileB, weightA, idea, qs("#blendModeSelect").value, qs("#blendLongformMode").value);
-      qs("#blendOutput").value = await callOpenAIResponse(prompt);
-      qs("#blendStatus").textContent = "模型生成完成。";
+      const draft = await callOpenAIResponse(prompt);
+      const blended = createBlendedProfile(profileA, profileB, weightA);
+      const audit = contentIntegrityAudit(idea, draft, blended);
+      qs("#blendOutput").value = `${draft.trim()}
+
+${formatIntegrityAuditMarkdown(audit)}`;
+      qs("#blendStatus").textContent = "模型生成完成，并已完成本地保真复核。";
     } catch (error) {
       qs("#blendStatus").textContent = `调用失败：${error.message}`;
       showToast("模型调用失败。");

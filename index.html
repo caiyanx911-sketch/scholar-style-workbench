@@ -156,7 +156,7 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>输入你的观点</h3>
-                <p>先抽论点，再按 profile 重构段落，并进行反通用 AI 腔自检。</p>
+                <p>先锁定原文语义，再调用模型按 profile 做风格迁移。</p>
               </div>
               <label class="field-label" for="rewriteMode">目标体裁</label>
               <select id="rewriteMode" class="text-input">
@@ -177,12 +177,12 @@
 
               <label class="field-label" for="ideaInput">你的原始观点</label>
               <p class="hint">可以粘贴长文本，一万字也会先分块吸收，再锁定证据句、核心判断和待核验项。</p>
-              <textarea id="ideaInput" class="large-textarea" placeholder="把你的观点、论文草稿、章节材料或长篇笔记粘贴到这里。系统会先做材料吸收包，再按当前学者 profile 改写。"></textarea>
+              <textarea id="ideaInput" class="large-textarea" placeholder="把你的观点、论文草稿、章节材料或长篇笔记粘贴到这里。系统会先锁定原文判断、证据和待核验边界，再调用模型做风格迁移。"></textarea>
 
               <div class="button-row">
-                <button id="draftButton" class="primary-button">Codex 风格重构</button>
-                <button id="aiLongformButton">调用模型生成长文</button>
-                <button id="promptButton">生成 AI Prompt</button>
+                <button id="draftButton" class="primary-button">生成语义锁定包</button>
+                <button id="aiLongformButton">调用模型严格改写</button>
+                <button id="promptButton">生成严格 Prompt</button>
               </div>
               <p id="aiStatus" class="hint">尚未调用模型。</p>
             </section>
@@ -190,7 +190,7 @@
             <section class="tool-surface">
               <div class="section-head">
                 <h3>输出</h3>
-                <p>输出包含论点抽取、风格化改写、自检分数和出处建议。</p>
+                <p>本地按钮只生成语义锁定包；正式改写由模型完成，并追加保真复核。</p>
               </div>
               <textarea id="rewriteOutput" class="output-textarea" readonly></textarea>
               <button id="copyRewriteButton" class="wide-button">复制输出</button>
@@ -248,8 +248,8 @@
               <textarea id="blendIdeaInput" class="large-textarea" placeholder="把要改写的观点、草稿或章节材料粘贴到这里。"></textarea>
 
               <div class="button-row">
-                <button id="blendDraftButton" class="primary-button">生成融合稿</button>
-                <button id="blendAiLongformButton">调用模型生成</button>
+                <button id="blendDraftButton" class="primary-button">生成融合锁定包</button>
+                <button id="blendAiLongformButton">调用模型严格改写</button>
                 <button id="blendPromptButton">生成融合 Prompt</button>
               </div>
               <p id="blendStatus" class="hint">未调用模型。</p>
@@ -314,6 +314,6 @@
     <div id="toast" class="toast" aria-live="polite"></div>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="./app.js?v=clean-rewrite-20260620"></script>
+    <script src="./app.js?v=semantic-lock-20260621"></script>
   </body>
 </html>
