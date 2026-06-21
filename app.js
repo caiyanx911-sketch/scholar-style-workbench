@@ -1,7 +1,26 @@
 const STORAGE_KEY = "scholar-style-workbench-profiles-v1";
 const SETTINGS_KEY = "scholar-style-workbench-ai-settings-v1";
 const SESSION_KEY = "scholar-style-workbench-session-api-key";
-const DEFAULT_ENDPOINT = "https://api.openai.com/v1/responses";
+const DEFAULT_PROVIDER = "openai";
+const AI_PROVIDERS = {
+  openai: {
+    label: "OpenAI Responses",
+    endpoint: "https://api.openai.com/v1/responses",
+    format: "responses",
+    models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4.1"],
+    defaultModel: "gpt-5.5",
+    hint: "OpenAI 使用 Responses API；不勾选保存时 key 只保留到当前会话。",
+  },
+  deepseek: {
+    label: "DeepSeek Chat Completions",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    format: "chat",
+    models: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+    defaultModel: "deepseek-v4-pro",
+    hint: "DeepSeek 使用 Chat Completions；如果浏览器提示 Failed to fetch，可能是 CORS/网络拦截，需要后端代理。",
+  },
+};
+const DEFAULT_ENDPOINT = AI_PROVIDERS[DEFAULT_PROVIDER].endpoint;
 const PDF_WORKER_SRC = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
 
 const markerSets = {
@@ -362,24 +381,51 @@ function normalizeProfile(profile) {
   };
 }
 
+function normalizeProvider(provider, endpoint = "") {
+  if (provider && AI_PROVIDERS[provider]) return provider;
+  if (/deepseek/i.test(endpoint || "")) return "deepseek";
+  return DEFAULT_PROVIDER;
+}
+
+function providerConfig(provider) {
+  return AI_PROVIDERS[normalizeProvider(provider)] || AI_PROVIDERS[DEFAULT_PROVIDER];
+}
+
+function normalizeEndpointForProvider(provider, endpoint = "") {
+  const config = providerConfig(provider);
+  const clean = String(endpoint || "").trim();
+  if (!clean) return config.endpoint;
+  if (provider === "deepseek") {
+    if (/\/chat\/completions\/?$/i.test(clean)) return clean.replace(/\/$/, "");
+    if (/^https:\/\/api\.deepseek\.com\/?$/i.test(clean)) return "https://api.deepseek.com/chat/completions";
+  }
+  return clean;
+}
+
 function loadAiSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    const provider = normalizeProvider(stored.provider, stored.endpoint);
+    const config = providerConfig(provider);
     return {
-      endpoint: stored.endpoint || DEFAULT_ENDPOINT,
-      model: stored.model || "gpt-5.5",
+      provider,
+      endpoint: normalizeEndpointForProvider(provider, stored.endpoint || config.endpoint),
+      model: stored.model || config.defaultModel,
       reasoning: stored.reasoning || "medium",
       rememberKey: Boolean(stored.rememberKey),
       apiKey: stored.rememberKey ? stored.apiKey || "" : sessionStorage.getItem(SESSION_KEY) || "",
     };
   } catch {
-    return { endpoint: DEFAULT_ENDPOINT, model: "gpt-5.5", reasoning: "medium", rememberKey: false, apiKey: "" };
+    const config = providerConfig(DEFAULT_PROVIDER);
+    return { provider: DEFAULT_PROVIDER, endpoint: config.endpoint, model: config.defaultModel, reasoning: "medium", rememberKey: false, apiKey: "" };
   }
 }
 
 function saveAiSettingsFromForm() {
+  const provider = normalizeProvider(qs("#providerSelect")?.value, qs("#apiEndpointInput").value.trim());
   aiSettings = {
-    endpoint: qs("#apiEndpointInput").value.trim() || DEFAULT_ENDPOINT,
+    provider,
+    endpoint: normalizeEndpointForProvider(provider, qs("#apiEndpointInput").value.trim()),
     model: qs("#modelSelect").value,
     reasoning: qs("#reasoningSelect").value,
     rememberKey: qs("#rememberKeyToggle").checked,
@@ -389,7 +435,7 @@ function saveAiSettingsFromForm() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(aiSettings));
     sessionStorage.removeItem(SESSION_KEY);
   } else {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ endpoint: aiSettings.endpoint, model: aiSettings.model, reasoning: aiSettings.reasoning, rememberKey: false }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ provider: aiSettings.provider, endpoint: aiSettings.endpoint, model: aiSettings.model, reasoning: aiSettings.reasoning, rememberKey: false }));
     sessionStorage.setItem(SESSION_KEY, aiSettings.apiKey);
   }
 }
@@ -501,12 +547,27 @@ function renderRulebook() {
   qs("#rulebookView").textContent = profileToMarkdown(activeProfile());
 }
 
+function renderModelOptions(provider, selectedModel) {
+  const select = qs("#modelSelect");
+  if (!select) return;
+  const config = providerConfig(provider);
+  const models = config.models.includes(selectedModel)
+    ? config.models
+    : uniqueItems([selectedModel, ...config.models]).filter(Boolean);
+  select.innerHTML = models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("");
+  select.value = selectedModel || config.defaultModel;
+}
+
 function renderAiSettings() {
-  qs("#apiEndpointInput").value = aiSettings.endpoint || DEFAULT_ENDPOINT;
+  const provider = normalizeProvider(aiSettings.provider, aiSettings.endpoint);
+  const config = providerConfig(provider);
+  qs("#providerSelect").value = provider;
+  qs("#apiEndpointInput").value = normalizeEndpointForProvider(provider, aiSettings.endpoint || config.endpoint);
   qs("#apiKeyInput").value = aiSettings.apiKey || "";
-  qs("#modelSelect").value = aiSettings.model || "gpt-5.5";
+  renderModelOptions(provider, aiSettings.model || config.defaultModel);
   qs("#reasoningSelect").value = aiSettings.reasoning || "medium";
   qs("#rememberKeyToggle").checked = Boolean(aiSettings.rememberKey);
+  if (qs("#providerHint")) qs("#providerHint").textContent = config.hint;
 }
 
 function renderBlendControls() {
@@ -2565,32 +2626,97 @@ function buildBlendLongformPrompt(profileA, profileB, weightA, idea, mode, longf
 - 让融合后的文本呈现为作者自己的原创学术声线，而不是两种风格拼贴。`;
 }
 
-async function callOpenAIResponse(prompt) {
-  saveAiSettingsFromForm();
-  if (!aiSettings.apiKey) throw new Error("请先填写 API Key。");
+function buildModelRequest(prompt) {
+  const provider = normalizeProvider(aiSettings.provider, aiSettings.endpoint);
+  const config = providerConfig(provider);
+  const model = aiSettings.model || config.defaultModel;
+  if (config.format === "chat") {
+    const payload = {
+      model,
+      messages: [
+        {
+          role: "system",
+          content: "你是一个严谨的中文学术写作助手。必须保持用户原文事实与证据边界，不得臆造。",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      stream: false,
+      max_tokens: 6500,
+    };
+    if (/^deepseek-v4-pro$|reasoner/i.test(model)) {
+      payload.reasoning_effort = aiSettings.reasoning || "medium";
+      payload.thinking = { type: "enabled" };
+    }
+    if (/^deepseek-v4-flash$|chat/i.test(model)) {
+      payload.thinking = { type: "disabled" };
+    }
+    return payload;
+  }
   const payload = {
-    model: aiSettings.model,
+    model,
     input: prompt,
     store: false,
     max_output_tokens: 6500,
   };
-  if (/^gpt-5|^o\d/i.test(aiSettings.model)) {
+  if (/^gpt-5|^o\d/i.test(model)) {
     payload.reasoning = { effort: aiSettings.reasoning };
   }
-  const response = await fetch(aiSettings.endpoint || DEFAULT_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${aiSettings.apiKey}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  return payload;
+}
+
+function extractModelResponseText(data) {
+  if (data.output_text) return data.output_text;
+  const chatText = (data.choices || [])
+    .map((choice) => choice.message?.content || choice.delta?.content || "")
+    .filter(Boolean)
+    .join("\n");
+  if (chatText) return chatText;
+  return (data.output || [])
+    .flatMap((item) => item.content || [])
+    .map((content) => content.text || content.output_text || "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function friendlyFetchError(error) {
+  const endpoint = aiSettings.endpoint || "";
+  const provider = normalizeProvider(aiSettings.provider, endpoint);
+  if (/Failed to fetch|NetworkError|Load failed|fetch/i.test(error.message || "")) {
+    if (provider === "deepseek") {
+      return "连接失败：DeepSeek 可能被浏览器 CORS/网络策略拦截，或接口地址不对。请确认地址为 https://api.deepseek.com/chat/completions；如果仍失败，需要用后端代理，GitHub Pages 纯前端可能无法直连。";
+    }
+    return "连接失败：浏览器没有拿到接口响应。请检查网络、接口地址、浏览器插件/CORS 拦截，或换用后端代理。";
+  }
+  return error.message || String(error);
+}
+
+async function callOpenAIResponse(prompt) {
+  saveAiSettingsFromForm();
+  if (!aiSettings.apiKey) throw new Error("请先填写 API Key。");
+  const endpoint = normalizeEndpointForProvider(aiSettings.provider, aiSettings.endpoint);
+  const payload = buildModelRequest(prompt);
+  let response;
+  try {
+    response = await fetch(endpoint || DEFAULT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aiSettings.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw new Error(friendlyFetchError(error));
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = data.error?.message || `${response.status} ${response.statusText}`;
     throw new Error(message);
   }
-  return extractResponseText(data) || JSON.stringify(data, null, 2);
+  return extractModelResponseText(data) || JSON.stringify(data, null, 2);
 }
 
 async function generateStrictModelDraft(profile, idea, mode, longformMode = "1200") {
@@ -2600,15 +2726,6 @@ async function generateStrictModelDraft(profile, idea, mode, longformMode = "120
   return `${draft.trim()}
 
 ${formatIntegrityAuditMarkdown(audit)}`;
-}
-
-function extractResponseText(data) {
-  if (data.output_text) return data.output_text;
-  return (data.output || [])
-    .flatMap((item) => item.content || [])
-    .map((content) => content.text || content.output_text || "")
-    .filter(Boolean)
-    .join("\n");
 }
 
 function diagnoseText(profile, text) {
@@ -2825,6 +2942,14 @@ ${formatIntegrityAuditMarkdown(audit)}`;
   qs("#exportCitationIndexButton").addEventListener("click", () => {
     const profile = activeProfile();
     download(`${profile.name}-citations.md`, citationIndexToMarkdown(profile));
+  });
+
+  qs("#providerSelect").addEventListener("change", () => {
+    const provider = normalizeProvider(qs("#providerSelect").value);
+    const config = providerConfig(provider);
+    qs("#apiEndpointInput").value = config.endpoint;
+    renderModelOptions(provider, config.defaultModel);
+    if (qs("#providerHint")) qs("#providerHint").textContent = config.hint;
   });
 
   qs("#saveAiSettingsButton").addEventListener("click", () => {

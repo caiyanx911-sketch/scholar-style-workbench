@@ -55,12 +55,18 @@
 
         <section class="panel compact">
           <h2>AI 调用</h2>
+          <label class="field-label" for="providerSelect">服务商</label>
+          <select id="providerSelect" class="text-input">
+            <option value="openai">OpenAI Responses</option>
+            <option value="deepseek">DeepSeek Chat Completions</option>
+          </select>
+
           <label class="field-label" for="apiEndpointInput">接口地址</label>
           <input id="apiEndpointInput" class="text-input" value="https://api.openai.com/v1/responses" />
 
           <label class="field-label" for="apiKeyInput">API Key</label>
-          <input id="apiKeyInput" class="text-input" type="password" autocomplete="off" placeholder="sk-..." />
-          <p class="hint">浏览器直连 OpenAI；不勾选保存时只保留到当前会话。</p>
+          <input id="apiKeyInput" class="text-input" type="password" autocomplete="off" placeholder="sk-... 或 sk-..." />
+          <p id="providerHint" class="hint">OpenAI 使用 Responses API；不勾选保存时 key 只保留到当前会话。</p>
 
           <div class="button-row">
             <select id="modelSelect" class="text-input compact-select">
@@ -314,6 +320,6 @@
     <div id="toast" class="toast" aria-live="polite"></div>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="./app.js?v=semantic-lock-20260621"></script>
+    <script src="./app.js?v=provider-deepseek-20260621"></script>
   </body>
 </html>
